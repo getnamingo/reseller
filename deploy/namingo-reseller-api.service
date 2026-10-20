@@ -1,0 +1,44 @@
+[Unit]
+Description=Namingo Reseller EPP JSON API
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=namingo-api
+Group=namingo-api
+WorkingDirectory=/opt/namingo-reseller-api
+EnvironmentFile=/opt/namingo-reseller-api/.env
+ExecStart=/usr/bin/php8.5 /opt/namingo-reseller-api/bin/server.php
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+
+RuntimeDirectory=namingo-epp-api
+RuntimeDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/run/namingo-epp-api
+
+[Install]
+WantedBy=multi-user.target

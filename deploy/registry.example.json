@@ -1,0 +1,31 @@
+{
+    "connection": {
+        "host": "epp.registry.example",
+        "port": 700,
+        "timeout": 30,
+        "tls": "1.3",
+        "verify_peer": true,
+        "verify_peer_name": true,
+        "allow_self_signed": false,
+        "bind": false,
+        "bindip": "",
+        "ca_pem": "-----BEGIN CERTIFICATE-----\nREPLACE WITH REGISTRY CA WHEN NEEDED\n-----END CERTIFICATE-----",
+        "client_cert_pem": "-----BEGIN CERTIFICATE-----\nREPLACE WITH CLIENT CERTIFICATE WHEN NEEDED\n-----END CERTIFICATE-----",
+        "client_key_pem": "-----BEGIN PRIVATE KEY-----\nREPLACE WITH CLIENT PRIVATE KEY WHEN NEEDED\n-----END PRIVATE KEY-----",
+        "client_key_passphrase": ""
+    },
+    "login": {
+        "clID": "registrar-id",
+        "pw": "replace-with-registry-password",
+        "prefix": "api"
+    },
+    "loginObjects": [
+        "urn:ietf:params:xml:ns:domain-1.0",
+        "urn:ietf:params:xml:ns:contact-1.0",
+        "urn:ietf:params:xml:ns:host-1.0"
+    ],
+    "loginExtensions": [
+        "urn:ietf:params:xml:ns:secDNS-1.1",
+        "urn:ietf:params:xml:ns:rgp-1.0"
+    ]
+}

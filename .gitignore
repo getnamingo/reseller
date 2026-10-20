@@ -1,0 +1,5 @@
+/.env
+/vendor/
+/*.pem
+/registry*.json
+/.phpunit.cache/
