@@ -261,7 +261,7 @@ Other endpoints:
 Run the Guzzle example:
 
 ```bash
-export API_BASE_URL=https://api.example.test
+export API_BASE_URL=https://api.example.test or API_BASE_URL=http://127.0.0.1:9501
 export API_USERNAME=reseller1
 export API_PASSWORD='reseller-password'
 export API_REGISTRY_UUID=REGISTRY_UUID

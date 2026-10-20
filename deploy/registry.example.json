@@ -9,7 +9,7 @@
         "allow_self_signed": false,
         "bind": false,
         "bindip": "",
-        "ca_pem": "-----BEGIN CERTIFICATE-----\nREPLACE WITH REGISTRY CA WHEN NEEDED\n-----END CERTIFICATE-----",
+        "ca_pem": null,
         "client_cert_pem": "-----BEGIN CERTIFICATE-----\nREPLACE WITH CLIENT CERTIFICATE WHEN NEEDED\n-----END CERTIFICATE-----",
         "client_key_pem": "-----BEGIN PRIVATE KEY-----\nREPLACE WITH CLIENT PRIVATE KEY WHEN NEEDED\n-----END PRIVATE KEY-----",
         "client_key_passphrase": ""
