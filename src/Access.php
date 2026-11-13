@@ -39,7 +39,7 @@ final class Access
                 FROM registry_tlds t LEFT JOIN reseller_tlds rt
                   ON rt.registry_id = t.registry_id AND rt.tld = t.tld AND rt.reseller_id = ?
                 WHERE t.registry_id = ? AND t.tld IN (' . implode(',', array_fill(0, count($zones), '?')) . ')
-                ORDER BY CHAR_LENGTH(t.tld) DESC LIMIT 1');
+                ORDER BY CHAR_LENGTH(t.tld) DESC LIMIT 1' . ($pdo->inTransaction() ? ' FOR UPDATE' : ''));
             $stmt->execute([$reseller, $registry, ...$zones]);
             $row = $stmt->fetch();
             if ($row === false || !(bool) $row['enabled'] || !(bool) $row['permitted']) {

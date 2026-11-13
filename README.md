@@ -459,6 +459,43 @@ EPP code, timestamps and latest error. Pending/unknown jobs offer the existing v
 resolution controls with the selected job reference filled in. Resellers cannot access
 these cross-account investigation pages.
 
+Select a reseller UUID in the admin account table to edit its username, contact name,
+company, email, phone, postal address and two-letter country code. Contact fields are
+optional; email is a contact address, not a replacement login. Username changes revoke
+API tokens and panel sessions, but retain the existing password and reseller UUID.
+Wallet currency stays fixed to preserve the meaning of historical amounts. Password,
+role and suspension controls remain on the account administration page. Resellers see
+their current details on Account and in the `profile` object of `GET /v1/account`.
+
+The equivalent CLI command accepts partial account changes as a JSON object:
+
+```bash
+php bin/manage.php user:update RESELLER_UUID account.json
+# Or pass the same JSON on stdin with '-' as the file argument.
+```
+
+For example: `{"username":"new-login","display_name":"Contact Name","company":"Example Ltd","email":"contact@example.com","phone":"+359 123456789","address":"Street 1, Sofia","country_code":"BG"}`.
+Only supplied fields change; an empty string clears an optional contact field. UUID,
+currency, password and role are not accepted by this command.
+
+The TLD administration table now has per-row enable/disable and removal controls, and
+permission rows offer removal of an assignment. Existing add-TLD, grant/revoke and price
+forms remain available. Removing an unused TLD removes its assignments and exact TLD
+prices across reseller/global scopes, retaining registry-wide prices and historical data.
+Owned domains (including redemption reservations) or any unsettled jobs in that registry
+block deletion; disable the TLD instead to preserve the longest-suffix access boundary.
+To correct an unused suffix, remove it and add the correct suffix. CLI equivalents are:
+
+```bash
+php bin/manage.php tld:delete REGISTRY_UUID TLD
+php bin/manage.php tld:unassign RESELLER_UUID REGISTRY_UUID TLD
+```
+
+Apply migration `005_account_details` using `php bin/manage.php migrate` before running
+the updated API/panel. Existing accounts receive empty optional details. Run
+`tests/admin_editing.php` with the documented `TEST_MYSQL_*` settings to verify account
+editing, token behavior, CLI commands, migration and safe TLD removal.
+
 ### Install or upgrade
 
 1. Stop submissions/workers during the database upgrade and back up the database.

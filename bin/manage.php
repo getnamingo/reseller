@@ -4,6 +4,7 @@
 declare(strict_types=1);
 
 use Namingo\ResellerApi\Audit;
+use Namingo\ResellerApi\Admin;
 use Namingo\ResellerApi\Access;
 use Namingo\ResellerApi\CommandCatalog;
 use Namingo\ResellerApi\Config;
@@ -33,6 +34,7 @@ Namingo Reseller EPP API management
   php bin/manage.php migrate
   php bin/manage.php user:create USERNAME CURRENCY
   php bin/manage.php user:role RESELLER_UUID 0|1
+  php bin/manage.php user:update RESELLER_UUID JSON_FILE|-
   php bin/manage.php user:password RESELLER_UUID
   php bin/manage.php user:status RESELLER_UUID active|suspended
   php bin/manage.php token:revoke-all RESELLER_UUID
@@ -43,8 +45,10 @@ Namingo Reseller EPP API management
   php bin/manage.php registry:revoke RESELLER_UUID REGISTRY_UUID
   php bin/manage.php tld:add REGISTRY_UUID TLD
   php bin/manage.php tld:status REGISTRY_UUID TLD enabled|disabled
+  php bin/manage.php tld:delete REGISTRY_UUID TLD
   php bin/manage.php tld:grant RESELLER_UUID REGISTRY_UUID TLD
   php bin/manage.php tld:revoke RESELLER_UUID REGISTRY_UUID TLD
+  php bin/manage.php tld:unassign RESELLER_UUID REGISTRY_UUID TLD
   php bin/manage.php auth:prune
   php bin/manage.php price:set REGISTRY_UUID COMMAND AMOUNT CURRENCY [RESELLER_UUID|global] [TLD|-] [YEARS|0]
   php bin/manage.php price:delete REGISTRY_UUID COMMAND [RESELLER_UUID|global] [TLD|-] [YEARS|0]
@@ -120,11 +124,11 @@ $newPassword = static function () use ($secret): string {
 $readConfig = static function (string $source): array {
     $raw = $source === '-' ? stream_get_contents(STDIN) : file_get_contents($source);
     if ($raw === false || $raw === '') {
-        throw new RuntimeException('Registry configuration could not be read.');
+        throw new RuntimeException('JSON document could not be read.');
     }
     $config = json_decode($raw, true, 32, JSON_THROW_ON_ERROR);
     if (!is_array($config) || ($config !== [] && array_is_list($config))) {
-        throw new RuntimeException('Registry configuration must be a JSON object.');
+        throw new RuntimeException('Document must be a JSON object.');
     }
     return $config;
 };
@@ -151,6 +155,9 @@ try {
             }
             if ($exists !== false && !$pdo->query("SELECT 1 FROM schema_migrations WHERE version = '004_lifecycle_queue'")->fetchColumn()) {
                 $pdo->exec(file_get_contents($root . '/database/004_lifecycle_queue.sql'));
+            }
+            if ($exists !== false && !$pdo->query("SELECT 1 FROM schema_migrations WHERE version = '005_account_details'")->fetchColumn()) {
+                $pdo->exec(file_get_contents($root . '/database/005_account_details.sql'));
             }
             $sql = file_get_contents($root . '/database/schema.sql');
             if ($sql === false) {
@@ -191,6 +198,22 @@ try {
             echo $resellerId . PHP_EOL;
             break;
 
+        case 'user:update':
+            $resellerId = $uuid($arg(2, 'RESELLER_UUID'), 'RESELLER_UUID');
+            $changes = $readConfig($arg(3, 'JSON_FILE|-'));
+            Admin::updateAccount($pdo, $resellerId, $changes);
+            Audit::record($pdo, $resellerId, 'admin.account_updated', 'reseller', $resellerId, null, ['fields' => array_keys($changes)]);
+            echo "Account updated. Username changes revoke existing tokens and panel sessions.\n";
+            break;
+
+        case 'tld:delete':
+            $registryId = $uuid($arg(2, 'REGISTRY_UUID'), 'REGISTRY_UUID');
+            $tld = Access::tld($arg(3, 'TLD'));
+            Admin::deleteTld($pdo, $registryId, $tld);
+            Audit::record($pdo, null, 'admin.tld_deleted', 'registry', $registryId, null, ['tld' => $tld]);
+            echo "Unused TLD, its grants and exact TLD prices removed.\n";
+            break;
+
         case 'user:role':
             $resellerId = $uuid($arg(2, 'RESELLER_UUID'), 'RESELLER_UUID');
             $role = $arg(3, '0|1');
@@ -218,11 +241,16 @@ try {
 
         case 'tld:grant':
         case 'tld:revoke':
+        case 'tld:unassign':
             $resellerId = $uuid($arg(2, 'RESELLER_UUID'), 'RESELLER_UUID');
             $registryId = $uuid($arg(3, 'REGISTRY_UUID'), 'REGISTRY_UUID');
             $tld = Access::tld($arg(4, 'TLD'));
-            $pdo->prepare('INSERT INTO reseller_tlds (reseller_id, registry_id, tld, enabled) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)')
-                ->execute([$resellerId, $registryId, $tld, (int) ($command === 'tld:grant')]);
+            if ($command === 'tld:unassign') {
+                $pdo->prepare('DELETE FROM reseller_tlds WHERE reseller_id = ? AND registry_id = ? AND tld = ?')->execute([$resellerId, $registryId, $tld]);
+            } else {
+                $pdo->prepare('INSERT INTO reseller_tlds (reseller_id, registry_id, tld, enabled) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)')
+                    ->execute([$resellerId, $registryId, $tld, (int) ($command === 'tld:grant')]);
+            }
             Audit::record($pdo, $resellerId, 'admin.' . str_replace(':', '_', $command), 'registry', $registryId, null, ['tld' => $tld]);
             echo "TLD permission saved.\n";
             break;
