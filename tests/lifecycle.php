@@ -89,6 +89,28 @@ try {
     $cancelled['reDate']=json_decode(Crypto::decrypt(raw($parent)['response_nonce'],raw($parent)['response_cipher'],'job-response:'.$parent['job_id']),true)['reDate'];
     Ledger::completeJob($pdo,$cancel['job_id'],'succeeded',$cancelled,1000);Lifecycle::observeFollowup($pdo,raw($cancel),$cancelled,'shared');
     check(raw($parent)['status']==='rejected' && own('cancel.com')===false,'Cancellation releases original hold and pending ownership');
+    // A 1001 cancellation follows the gaining client and the original request date.
+    $pdo->exec("UPDATE registry_prices SET amount=3 WHERE command='domain.transfer' AND period=0");
+    foreach ([false, true] as $parentFirst) {
+        $name=$parentFirst?'cancel-parent-first.com':'cancel-child-first.com';
+        $parent=transfer($name);$date=gmdate('Y-m-d\TH:i:s\Z',time()-86400*2);
+        Ledger::completeJob($pdo,$parent['job_id'],'pending',['code'=>1001,'reDate'=>$date],1001);
+        $cancel=job('domain.transfer',['domainname'=>$name,'op'=>'cancel']);
+        Ledger::completeJob($pdo,$cancel['job_id'],'pending',['code'=>1001],1001);
+        $cancelled=array_replace(transferInfo($name,'clientCancelled'),['reDate'=>$date]);
+        check(Lifecycle::decision(raw($cancel),array_replace($cancelled,['reID'=>'other','acID'=>'shared']),'shared',raw($parent))===null,'Cancellation rejects losing-client-only correlation');
+        check(!Lifecycle::settle($pdo,raw($cancel),array_replace($cancelled,['reDate'=>gmdate('Y-m-d\TH:i:s\Z')]),'shared'),'Cancellation rejects another transfer request date');
+        check(!Lifecycle::settle($pdo,raw($cancel),array_replace($cancelled,['trStatus'=>'pending']),'shared'),'Cancellation waits for clientCancelled');
+        if ($parentFirst) { Lifecycle::settle($pdo,raw($parent),$cancelled,'shared'); }
+        $pendingCancel=raw($cancel);
+        check(Lifecycle::settle($pdo,$pendingCancel,$cancelled,'shared'),'Accepted incoming cancellation confirms against gaining client');
+        Lifecycle::observeFollowup($pdo,$pendingCancel,$cancelled,'shared');
+        Lifecycle::settle($pdo,$pendingCancel,$cancelled,'shared');
+        check(raw($cancel)['status']==='succeeded' && raw($parent)['status']==='rejected' && own($name)===false,'Both settlement orders finish cancellation and original request');
+        check((int)$pdo->query("SELECT COUNT(*) FROM ledger_entries WHERE job_id='".$cancel['job_id']."' AND kind='charge'")->fetchColumn()===1,'Cancellation fee charges exactly once');
+        check((int)$pdo->query("SELECT COUNT(*) FROM ledger_entries WHERE job_id='".$parent['job_id']."' AND kind='release'")->fetchColumn()===1,'Original transfer hold releases exactly once');
+    }
+    $pdo->exec("UPDATE registry_prices SET amount=0 WHERE command='domain.transfer' AND period=0");
     $parent=transfer('approve.com');$query=job('domain.transfer',['domainname'=>'approve.com','op'=>'query']);$approved=transferInfo('approve.com','serverApproved');
     $approved['reDate']=json_decode(Crypto::decrypt(raw($parent)['response_nonce'],raw($parent)['response_cipher'],'job-response:'.$parent['job_id']),true)['reDate'];
     check(Lifecycle::decision(raw($parent),array_replace($approved,['reID'=>'another-client']),'shared')===null,'Wrong gaining client cannot settle transfer');
