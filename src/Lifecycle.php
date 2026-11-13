@@ -40,18 +40,20 @@ final class Lifecycle
     }
 
     /** Only registry observations settle accepted work. Unknown writes need operator reconciliation. */
-    public static function decision(array $job, array $observation, string $clientId): ?string
+    public static function decision(array $job, array $observation, string $clientId, ?array $request = null): ?string
     {
         if ($job['status'] !== 'pending' || isset($observation['error'])) { return null; }
         $params = Ownership::params($job);
         if ($job['command'] === 'domain.transfer') {
             if ((int) ($observation['code'] ?? 0) !== 1000 || strtolower($observation['name'] ?? '') !== strtolower($params['domainname'])) { return null; }
-            $incoming = ($params['op'] ?? '') === 'request';
+            $incoming = in_array($params['op'] ?? '', ['request', 'cancel'], true);
             if (($observation[$incoming ? 'reID' : 'acID'] ?? '') !== $clientId) { return null; }
             $date = strtotime($observation['reDate'] ?? '');
-            $created = (new \DateTimeImmutable($job['created_at'], new \DateTimeZone('UTC')))->getTimestamp();
-            $old = $job['response_cipher'] === null ? [] : json_decode(Crypto::decrypt($job['response_nonce'], $job['response_cipher'], 'job-response:' . $job['id']), true);
-            $expected = strtotime($old['reDate'] ?? '');
+            // A cancellation may arrive days after the transfer request, without its own reDate.
+            $correlation = ($params['op'] ?? '') === 'cancel' ? ($request ?? $job) : $job;
+            $created = (new \DateTimeImmutable($correlation['created_at'], new \DateTimeZone('UTC')))->getTimestamp();
+            $old = $correlation['response_cipher'] === null ? [] : json_decode(Crypto::decrypt($correlation['response_nonce'], $correlation['response_cipher'], 'job-response:' . $correlation['id']), true);
+            $expected = strtotime($old['reDate'] ?? $old['observation']['reDate'] ?? '');
             if ($date === false || ($expected !== false ? $date !== $expected : $date < $created - 60 || $date > time() + 300)) { return null; }
             $state = $observation['trStatus'] ?? '';
             $approved = in_array($state, ['clientApproved', 'serverApproved'], true);
@@ -84,7 +86,15 @@ final class Lifecycle
 
     public static function settle(PDO $pdo, array $job, array $observation, string $clientId): bool
     {
-        $status = self::decision($job, $observation, $clientId);
+        $request = null;
+        if ($job['command'] === 'domain.transfer' && (Ownership::params($job)['op'] ?? '') === 'cancel' && $job['parent_job_id'] !== null) {
+            $stmt = $pdo->prepare("SELECT * FROM epp_jobs WHERE id = ? AND reseller_id = ? AND registry_id = ? AND command = 'domain.transfer'");
+            $stmt->execute([$job['parent_job_id'], $job['reseller_id'], $job['registry_id']]);
+            $request = $stmt->fetch();
+            if ($request === false || (Ownership::params($request)['op'] ?? '') !== 'request'
+                || (Ownership::params($request)['domainname'] ?? '') !== (Ownership::params($job)['domainname'] ?? '')) { return false; }
+        }
+        $status = self::decision($job, $observation, $clientId, $request);
         if ($status === null) { return false; }
         Ledger::completeJob($pdo, $job['id'], $status,
             ['code' => $status === 'succeeded' ? 1000 : 2304, 'reconciled' => true,
