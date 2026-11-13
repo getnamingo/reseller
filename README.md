@@ -171,15 +171,85 @@ sudo -u namingo-api php8.5 bin/manage.php registry:grant RESELLER_UUID REGISTRY_
 
 The CLI encrypts the whole normalized registry JSON before insertion. PEM material is briefly written as mode `0600` under `/run/namingo-epp-api` by a task worker and removed in `finally`.
 
-An absent price means zero. Set a global price or a reseller override:
+Every command needs an explicit price, including zero for free operations. Missing prices
+return `409 price_not_configured` before an EPP job or wallet hold is committed.
+Domain creation (`domain.create` and `domain.create_dnssec`), renewal and incoming transfer
+requests require a zone and an exact term price. Amounts are the **total for that term**,
+not an annual amount multiplied automatically. The API derives the zone from the domain
+and the term from `period`, `regperiod`, or transfer `years` (integers 1–10).
+The longest matching configured zone wins (for example, `co.uk` before `uk`), then a
+reseller override wins over the global price for that same zone and term. There is no
+catch-all price fallback for these term operations. For other commands, period `0`
+means per operation and `-` means an explicit registry-wide price.
 
 ```bash
-sudo -u namingo-api php8.5 bin/manage.php price:set \
-  REGISTRY_UUID domain.create 12.50 EUR global
-
-sudo -u namingo-api php8.5 bin/manage.php price:set \
-  REGISTRY_UUID domain.create 10.00 EUR RESELLER_UUID
+# Total registration prices, with separate prices for each zone and term.
+sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.create 12.50 EUR global com 1
+sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.create 24.00 EUR global com 2
+sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.create 10.00 EUR RESELLER_UUID com 1
+sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.create 11.00 EUR global net 1
+# Explicit free operations: repeat for each command you intend to offer for free.
+sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.check 0 EUR
+sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID contact.create 0 EUR
+sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.info 0 EUR
+# Incoming request: domain.transfer with op=request, years=1 and authInfoPw.
+sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.transfer 12.50 EUR global com 1
+# Query/cancel/approve/reject use period 0, independently of incoming request prices.
+sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.transfer 0 EUR
+# Delete only the specified price row.
+sudo -u namingo-api php8.5 bin/manage.php price:delete REGISTRY_UUID domain.create global com 2
 ```
+
+Profiles whose pinned methods use a fixed/implicit term reject requests for longer
+terms: LV/NO creation, PT renewal, and EE/FRED/FI/IT/LT transfer requests.
+
+### Object ownership and upgrading existing installations
+
+Each upstream account must have **one registry UUID**, shared through registry grants.
+Do not duplicate the same credentials under multiple registry UUIDs, or repoint an
+existing UUID to another account; ownership is scoped to that UUID. Objects created
+through the API are reserved atomically for the submitting reseller. Other resellers
+cannot read, change or delete them, even when they know the upstream authInfo.
+Contact references must also belong to the caller. Public nameservers may be shared;
+creating a glue host beneath a managed domain requires that domain's owner. FRED
+NSSETs are tracked as host objects by `nsid` on create/update and `hostname` on info/delete.
+LT contacts are tracked using the registry-generated response `id`.
+
+Only hello and availability checks skip ownership checks. Unmapped existing objects
+are denied for info/update/delete; incoming transfer requests may reserve an unmapped
+domain with authInfo, but cannot claim a domain already mapped to another reseller.
+All operations on one object are serialized through a job reservation; busy objects
+return `409`, and unauthorized objects return `403`. Referenced contacts/NSSETs are
+checked again under the registry session lock immediately before execution.
+
+For an existing installation:
+
+1. Stop submissions, finish queued jobs and reconcile processing/unknown jobs before
+   stopping workers. `migrate` refuses unfinished jobs during this upgrade.
+2. Back up the database and run `php8.5 bin/manage.php migrate`. This applies migration
+   002 once; fresh installations already include it. Old prices remain as period-0,
+   registry-wide rows and cannot price term operations.
+3. Import **all** verified existing domains, contacts and hosts into their correct reseller
+   before reopening submissions. Never infer ownership from the shared upstream client ID.
+
+   ```bash
+   php8.5 bin/manage.php object:assign REGISTRY_UUID domain example.com RESELLER_UUID
+   php8.5 bin/manage.php object:assign REGISTRY_UUID contact CONTACT_ID RESELLER_UUID
+   php8.5 bin/manage.php object:assign REGISTRY_UUID host ns1.example.com RESELLER_UUID
+   ```
+
+4. Configure explicit prices (including free operations) and exact zone/term totals,
+   then restart the API and workers.
+
+Successful creates activate ownership; rejected creates release it. Successful deletes
+and outgoing transfer approvals remove it. Pending EPP responses (`1001`), unconfirmed
+incoming transfers and uncertain writes remain `unknown`, preserving ownership
+reservations and wallet holds. Verify the final registry outcome, then use the existing
+`job:resolve JOB_UUID charge|release`; `charge` means the operation actually completed,
+`release` means it did not. Reconcile any registry-generated LT contact ID lost with an
+unknown response using `object:assign` after resolving the job. Never retry an uncertain
+write under a new idempotency key. Ownership changes made outside this API must also
+be reconciled by the operator before enabling access to affected objects.
 
 ## TLS and systemd
 
@@ -312,3 +382,19 @@ If a process or host crash leaves an old job in `processing`, an operator may fi
 - MariaDB advisory locks serialize a registry across multiple API processes or hosts. Swoole rate limits are per API instance; database login lockout remains global.
 - Before changing the pinned EPP commit, compare its factory profiles and every method in `src/Registries`, test in each registry OTE, then update the pin.
 - Run `composer audit`, keep Ubuntu/MariaDB/PHP patched, and exercise restores and unknown-job reconciliation before production launch.
+
+
+## Regression tests
+
+Run with PHP CLI, PDO MySQL, mbstring and sodium against a disposable local MariaDB/MySQL
+server. The test account needs CREATE/DROP DATABASE privileges; the script creates and
+removes only its own randomly named database, and sends no EPP commands.
+
+```bash
+TEST_MYSQL_DSN='mysql:host=127.0.0.1;port=3306' \
+TEST_MYSQL_USER=root TEST_MYSQL_PASSWORD=secret php tests/isolation_pricing.php
+```
+
+The suite covers ownership and contact references, concurrent create reservations,
+unknown/rejected/deleted objects, idempotency, FRED/LT identifiers, pricing by zone and
+term, longest-zone precedence, explicit free operations, wallet rollback and schema upgrade.

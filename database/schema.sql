@@ -68,12 +68,27 @@ CREATE TABLE IF NOT EXISTS registry_prices (
     registry_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     reseller_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
     command VARCHAR(48) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    tld VARCHAR(253) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',
+    period TINYINT UNSIGNED NOT NULL DEFAULT 0,
     amount DECIMAL(19,4) UNSIGNED NOT NULL,
     currency CHAR(3) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (registry_id, reseller_id, command),
+    PRIMARY KEY (registry_id, reseller_id, command, tld, period),
     CONSTRAINT fk_price_registry FOREIGN KEY (registry_id) REFERENCES registries(id),
     CONSTRAINT chk_price_currency CHECK (currency REGEXP '^[A-Z]{3}$')
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS object_ownership (
+    registry_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    object_type ENUM('domain', 'contact', 'host') NOT NULL,
+    object_name VARCHAR(253) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    reseller_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    active TINYINT(1) NOT NULL DEFAULT 0,
+    job_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    PRIMARY KEY (registry_id, object_type, object_name),
+    INDEX idx_ownership_job (job_id),
+    CONSTRAINT fk_ownership_registry FOREIGN KEY (registry_id) REFERENCES registries(id),
+    CONSTRAINT fk_ownership_reseller FOREIGN KEY (reseller_id) REFERENCES resellers(id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS epp_jobs (
@@ -152,3 +167,5 @@ CREATE TABLE IF NOT EXISTS audit_events (
 ) ENGINE=InnoDB;
 
 INSERT IGNORE INTO schema_migrations (version) VALUES ('001_initial');
+
+INSERT IGNORE INTO schema_migrations (version) VALUES ('002_ownership_pricing');

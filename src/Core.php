@@ -556,6 +556,25 @@ final class CommandCatalog
         self::validateNode($params, 0);
     }
 
+    public static function priceKey(string $command, array $params): array
+    {
+        $name = isset($params['domainname']) ? Ownership::name($params['domainname'], 'domain') : '';
+        $key = match ($command) {
+            'domain.create', 'domain.create_dnssec' => 'period',
+            'domain.renew' => 'regperiod',
+            'domain.transfer' => ($params['op'] ?? '') === 'request' ? 'years' : null,
+            default => null,
+        };
+        if ($key === null) {
+            return [$name, 0];
+        }
+        $period = $params[$key] ?? null;
+        if ((!is_int($period) && !is_string($period)) || preg_match('/^(?:[1-9]|10)$/D', (string) $period) !== 1) {
+            throw new ApiException(422, 'invalid_period', "{$key} must be an integer from 1 to 10 years.");
+        }
+        return [$name, (int) $period];
+    }
+
     private static function validateNode(array $value, int $depth): void
     {
         if ($depth > 8) {
@@ -575,6 +594,135 @@ final class CommandCatalog
                 self::validateNode($item, $depth + 1);
             }
         }
+    }
+}
+
+final class Ownership
+{
+    public static function name(mixed $value, string $type): string
+    {
+        if (!is_string($value) || strlen($value) > 253 || $value === ''
+            || preg_match('/^[A-Za-z0-9][A-Za-z0-9._:-]*$/D', $value) !== 1
+            || ($type === 'domain' && preg_match('/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9-]+$/iD', $value) !== 1)) {
+            throw new ApiException(422, 'invalid_object_name', 'Use an ASCII object identifier or a domain in A-label form without a trailing dot.');
+        }
+        // Treat contact IDs conservatively as case-insensitive too: never create case aliases across tenants.
+        return strtolower($value);
+    }
+
+    public static function authorize(PDO $pdo, string $registry, string $reseller, string $command,
+        array $params, string $profile, string $jobId, bool $reserve = false): void
+    {
+        if ($command === 'hello' || str_ends_with($command, '.check')) {
+            return;
+        }
+        [$type, $action] = explode('.', $command, 2);
+        $generated = $profile === 'LT' && $command === 'contact.create';
+        $key = match ($type) {
+            'domain' => 'domainname',
+            'contact' => match ($action) {
+                'create', 'update' => 'id', 'update_authinfo' => 'contactid', default => 'contact',
+            },
+            'host' => $profile === 'FRED' && in_array($action, ['create', 'update'], true) ? 'nsid' : 'hostname',
+        };
+        $name = $generated ? null : self::name($params[$key] ?? null, $type);
+        $create = in_array($action, ['create', 'create_dnssec'], true);
+        $transfer = $command === 'domain.transfer' && ($params['op'] ?? '') === 'request';
+        if ($command === 'domain.transfer'
+            && !in_array($params['op'] ?? null, ['request', 'query', 'cancel', 'approve', 'reject'], true)) {
+            throw new ApiException(422, 'invalid_transfer_op', 'A valid transfer op is required.');
+        }
+        if ($transfer && (!is_string($params['authInfoPw'] ?? null) || $params['authInfoPw'] === '')) {
+            throw new ApiException(422, 'missing_authinfo', 'Incoming transfers require authInfoPw.');
+        }
+        [, $period] = CommandCatalog::priceKey($command, $params);
+        // These pinned profile methods use a fixed/implicit term instead of the supplied period.
+        if ($period > 1 && ((in_array($command, ['domain.create', 'domain.create_dnssec'], true) && in_array($profile, ['LV', 'NO'], true))
+            || ($command === 'domain.renew' && $profile === 'PT')
+            || ($transfer && in_array($profile, ['EE', 'FRED', 'FI', 'IT', 'LT'], true)))) {
+            throw new ApiException(422, 'unsupported_period', 'This profile supports only its implicit one-year term.');
+        }
+        if ($name !== null) {
+            $stmt = $pdo->prepare('SELECT * FROM object_ownership WHERE registry_id = ? AND object_type = ? AND object_name = ? FOR UPDATE');
+            $stmt->execute([$registry, $type, $name]);
+            $row = $stmt->fetch();
+            if (!$reserve) {
+                if ($row === false || $row['reseller_id'] !== $reseller || $row['job_id'] !== $jobId) {
+                    throw new ApiException(403, 'object_not_owned', 'Object is unavailable for this reseller.');
+                }
+            } elseif ($row === false && ($create || $transfer)) {
+                $insert = $pdo->prepare('INSERT INTO object_ownership (registry_id, object_type, object_name, reseller_id, active, job_id) VALUES (?, ?, ?, ?, 0, ?)');
+                $insert->execute([$registry, $type, $name, $reseller, $jobId]);
+            } else {
+                if ($row === false || $row['reseller_id'] !== $reseller) {
+                    throw new ApiException(403, 'object_not_owned', 'Object is unavailable for this reseller.');
+                }
+                if ($row['job_id'] !== null || !(bool) $row['active'] || $create || $transfer) {
+                    throw new ApiException(409, 'object_busy', 'Object already exists or requires reconciliation.');
+                }
+                $lock = $pdo->prepare('UPDATE object_ownership SET job_id = ? WHERE registry_id = ? AND object_type = ? AND object_name = ?');
+                $lock->execute([$jobId, $registry, $type, $name]);
+            }
+        }
+        // Validate every contact reference used by the pinned generic and registry profile methods.
+        foreach (['registrant', 'newRegistrant', 'new_contactid', 'old_contactid', 'tech', 'admin',
+            'billing', 'nstech', 'nstech_new', 'nstech_old', 'contacts'] as $key) {
+            if (isset($params[$key]) && $params[$key] !== '') {
+                foreach (is_array($params[$key]) ? $params[$key] : [$params[$key]] as $id) {
+                    self::requireOwned($pdo, $registry, $reseller, 'contact', $id);
+                }
+            }
+        }
+        if ($type === 'domain' && isset($params['nsid'])) {
+            self::requireOwned($pdo, $registry, $reseller, 'host', $params['nsid']);
+        }
+        // Public nameservers may be shared. Creating glue beneath a managed domain requires its owner.
+        if ($type === 'host' && $create && !in_array($profile, ['FRED', 'LT'], true)) {
+            $parent = $pdo->prepare("SELECT reseller_id, active, job_id FROM object_ownership
+                WHERE registry_id = ? AND object_type = 'domain' AND RIGHT(?, CHAR_LENGTH(object_name) + 1) = CONCAT('.', object_name)
+                ORDER BY CHAR_LENGTH(object_name) DESC LIMIT 1 FOR UPDATE");
+            $parent->execute([$registry, $name]);
+            $row = $parent->fetch();
+            if ($row !== false && ($row['reseller_id'] !== $reseller || !(bool) $row['active'] || $row['job_id'] !== null)) {
+                throw new ApiException(403, 'object_not_owned', 'Parent domain is unavailable for this reseller.');
+            }
+        }
+    }
+
+    private static function requireOwned(PDO $pdo, string $registry, string $reseller, string $type, mixed $name): void
+    {
+        $stmt = $pdo->prepare('SELECT reseller_id, active, job_id FROM object_ownership WHERE registry_id = ? AND object_type = ? AND object_name = ? FOR UPDATE');
+        $stmt->execute([$registry, $type, self::name($name, $type)]);
+        $row = $stmt->fetch();
+        if ($row === false || $row['reseller_id'] !== $reseller || !(bool) $row['active'] || $row['job_id'] !== null) {
+            throw new ApiException(403, 'object_not_owned', 'Referenced object is unavailable for this reseller.');
+        }
+    }
+
+    public static function finish(PDO $pdo, array $job, string $status, array $result): void
+    {
+        if ($status === 'unknown') {
+            return; // Keep reservations until the operator verifies the registry outcome.
+        }
+        $remove = $status === 'succeeded' && (str_ends_with($job['command'], '.delete')
+            || ($job['command'] === 'domain.transfer' && self::params($job)['op'] === 'approve'));
+        $delete = $pdo->prepare('DELETE FROM object_ownership WHERE job_id = ?' . ($remove ? '' : ' AND active = 0 AND ? = 1'));
+        $delete->execute($remove ? [$job['id']] : [$job['id'], (int) ($status === 'rejected')]);
+        $update = $pdo->prepare('UPDATE object_ownership SET active = 1, job_id = NULL WHERE job_id = ?');
+        $update->execute([$job['id']]);
+        if ($status === 'succeeded' && $job['command'] === 'contact.create' && isset($result['id'])) {
+            $profile = $pdo->prepare('SELECT profile FROM registries WHERE id = ?');
+            $profile->execute([$job['registry_id']]);
+            if ($profile->fetchColumn() === 'LT') {
+                $insert = $pdo->prepare("INSERT INTO object_ownership (registry_id, object_type, object_name, reseller_id, active) VALUES (?, 'contact', ?, ?, 1)");
+                $insert->execute([$job['registry_id'], self::name($result['id'], 'contact'), $job['reseller_id']]);
+            }
+        }
+    }
+
+    public static function params(array $job): array
+    {
+        return json_decode(Crypto::decrypt($job['request_nonce'], $job['request_cipher'], 'job-request:' . $job['id']), true, 32, JSON_THROW_ON_ERROR)['params'];
     }
 }
 
@@ -606,13 +754,17 @@ final class Ledger
             }
 
             $access = $pdo->prepare(
-                'SELECT r.id FROM registries r JOIN reseller_registries rr ON rr.registry_id = r.id
+                'SELECT r.profile FROM registries r JOIN reseller_registries rr ON rr.registry_id = r.id
                  WHERE r.id = ? AND rr.reseller_id = ? AND r.enabled = 1 AND rr.enabled = 1 LIMIT 1'
             );
             $access->execute([$registryId, $resellerId]);
-            if ($access->fetchColumn() === false) {
+            if (($profile = $access->fetchColumn()) === false) {
                 throw new ApiException(404, 'registry_not_found', 'Registry is unavailable for this reseller.');
             }
+
+            CommandCatalog::validateParams($command, $params);
+            $jobId = Util::uuid();
+            Ownership::authorize($pdo, $registryId, $resellerId, $command, $params, $profile, $jobId, true);
 
             $walletStmt = $pdo->prepare('SELECT * FROM wallets WHERE reseller_id = ? FOR UPDATE');
             $walletStmt->execute([$resellerId]);
@@ -620,7 +772,7 @@ final class Ledger
             if ($wallet === false) {
                 throw new RuntimeException('Wallet is missing.');
             }
-            [$price, $currency] = self::price($pdo, $registryId, $resellerId, $command, $wallet['currency']);
+            [$price, $currency] = self::price($pdo, $registryId, $resellerId, $command, $params);
             if ($currency !== $wallet['currency']) {
                 throw new ApiException(409, 'currency_mismatch', 'Registry price and wallet currencies do not match.');
             }
@@ -632,7 +784,6 @@ final class Ledger
                 ]);
             }
 
-            $jobId = Util::uuid();
             [$nonce, $cipher] = Crypto::encrypt($requestJson, 'job-request:' . $jobId);
             $insert = $pdo->prepare(
                 'INSERT INTO epp_jobs
@@ -658,12 +809,14 @@ final class Ledger
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
             }
-            if ($e->getCode() === '23000') {
+            if (in_array($e->getCode(), ['23000', '40001'], true)
+                || in_array((int) ($e->errorInfo[1] ?? 0), [1020, 1205, 1213], true)) {
                 $existing = self::findByIdempotency($pdo, $resellerId, $idempotencyKey, false);
                 if ($existing !== false) {
                     self::assertSameRequest($existing, $registryId, $command, $requestHash);
                     return ['existing' => true, 'job_id' => $existing['id'], 'status' => $existing['status']];
                 }
+                throw new ApiException(409, 'object_busy', 'Object already exists or is reserved by another request.');
             }
             throw $e;
         } catch (Throwable $e) {
@@ -694,6 +847,8 @@ final class Ledger
                 $pdo->commit();
                 return;
             }
+
+            Ownership::finish($pdo, $job, $status, $result);
 
             if ($job['price'] !== '0.0000' && $status !== 'unknown') {
                 $wallet = $pdo->prepare('SELECT * FROM wallets WHERE reseller_id = ? FOR UPDATE');
@@ -811,6 +966,7 @@ final class Ledger
                 }
             }
             $status = $action === 'charge' ? 'succeeded' : 'rejected';
+            Ownership::finish($pdo, $job, $status, []);
             $originalResult = null;
             if ($job['response_nonce'] !== null && $job['response_cipher'] !== null) {
                 $originalResult = json_decode(
@@ -879,16 +1035,24 @@ final class Ledger
         }
     }
 
-    private static function price(PDO $pdo, string $registryId, string $resellerId, string $command, string $walletCurrency): array
+    private static function price(PDO $pdo, string $registryId, string $resellerId, string $command, array $params): array
     {
+        [$name, $period] = CommandCatalog::priceKey($command, $params);
+        $term = $period > 0;
         $stmt = $pdo->prepare(
-            'SELECT amount, currency FROM registry_prices
-             WHERE registry_id = ? AND command = ? AND reseller_id IN (?, ?)
-             ORDER BY CASE WHEN reseller_id = ? THEN 0 ELSE 1 END LIMIT 1'
+            "SELECT amount, currency FROM registry_prices
+             WHERE registry_id = ? AND command = ? AND reseller_id IN (?, ?) AND period = ?
+               AND ((tld <> '' AND RIGHT(?, CHAR_LENGTH(tld) + 1) = CONCAT('.', tld))
+                    OR (tld = '' AND ? = 0))
+             ORDER BY CHAR_LENGTH(tld) DESC, CASE WHEN reseller_id = ? THEN 0 ELSE 1 END LIMIT 1"
         );
-        $stmt->execute([$registryId, $command, $resellerId, CommandCatalog::GLOBAL_PRICE_UUID, $resellerId]);
+        $stmt->execute([$registryId, $command, $resellerId, CommandCatalog::GLOBAL_PRICE_UUID,
+            $period, $name, (int) $term, $resellerId]);
         $price = $stmt->fetch();
-        return $price === false ? ['0.0000', $walletCurrency] : [$price['amount'], $price['currency']];
+        if ($price === false) {
+            throw new ApiException(409, 'price_not_configured', 'No price is configured for this operation and term.');
+        }
+        return [$price['amount'], $price['currency']];
     }
 
     private static function findByIdempotency(PDO $pdo, string $resellerId, string $key, bool $lock): array|false

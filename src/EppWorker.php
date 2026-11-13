@@ -49,6 +49,7 @@ final class EppWorker
         $lockName = null;
         $lockAcquired = false;
         $requeue = false;
+        $finalizeError = null;
         $secretFiles = [];
 
         try {
@@ -79,6 +80,9 @@ final class EppWorker
                 throw new RegistryBusyException('Registry session is busy; submit the same idempotent request again.');
             }
             $lockAcquired = true;
+
+            Ownership::authorize($pdo, $job['registry_id'], $job['reseller_id'], $job['command'],
+                $request['params'], $profile, $jobId);
 
             [$connection, $secretFiles] = self::prepareConnection($config['connection']);
             $epp = EppRegistryFactory::create($profile);
@@ -117,12 +121,14 @@ final class EppWorker
             $eppCode = isset($result['code']) && is_numeric($result['code']) ? (int) $result['code'] : null;
 
             if (isset($result['error']) || ($eppCode !== null && $eppCode >= 2000)) {
-                $message = self::message($result);
-                $status = CommandCatalog::isMutating($job['command']) && self::isTransportError($message)
+                $status = CommandCatalog::isMutating($job['command']) && ($eppCode === null || $eppCode < 2000)
                     ? 'unknown'
                     : 'rejected';
             } else {
-                $status = 'succeeded';
+                $pending = $eppCode === 1001 || $eppCode === null
+                    || ($job['command'] === 'domain.transfer' && ($request['params']['op'] ?? '') === 'request'
+                        && !in_array($result['trStatus'] ?? '', ['clientApproved', 'serverApproved'], true));
+                $status = CommandCatalog::isMutating($job['command']) && $pending ? 'unknown' : 'succeeded';
             }
         } catch (RegistryBusyException $e) {
             $result = ['error' => 'registry_busy', 'message' => $e->getMessage()];
@@ -133,7 +139,7 @@ final class EppWorker
         } catch (Throwable $e) {
             $message = self::safeException($e);
             $result = ['error' => $commandAttempted ? 'registry_command_failed' : 'registry_connection_failed', 'message' => $message];
-            $status = $commandAttempted && CommandCatalog::isMutating($job['command']) && self::isTransportError($message)
+            $status = $commandAttempted && CommandCatalog::isMutating($job['command'])
                 ? 'unknown'
                 : 'rejected';
         } finally {
@@ -152,6 +158,14 @@ final class EppWorker
             foreach ($secretFiles as $file) {
                 if (is_string($file) && is_file($file)) {
                     @unlink($file);
+                }
+            }
+            // Commit ownership and funds before another registry command can execute.
+            if (!$requeue) {
+                try {
+                    Ledger::completeJob($pdo, $jobId, $status, $result, $eppCode);
+                } catch (Throwable $e) {
+                    $finalizeError = $e;
                 }
             }
             if ($lockAcquired && $lockName !== null) {
@@ -177,7 +191,9 @@ final class EppWorker
         }
 
         try {
-            Ledger::completeJob($pdo, $jobId, $status, $result, $eppCode);
+            if ($finalizeError !== null) {
+                throw $finalizeError;
+            }
             Audit::record($pdo, $job['reseller_id'], 'epp.job_' . $status, 'job', $jobId, null, [
                 'command' => $job['command'],
                 'registry_uuid' => $job['registry_id'],
@@ -424,21 +440,6 @@ final class EppWorker
             return 'The registry operation failed.';
         }
         return mb_substr(preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $message) ?? 'The registry operation failed.', 0, 1000);
-    }
-
-    private static function isTransportError(string $message): bool
-    {
-        $message = strtolower($message);
-        foreach ([
-            'connection appears to have closed', 'failed to read header', 'error writing to the connection',
-            'cannot connect to server', 'connection reset', 'broken pipe', 'timed out', 'timeout',
-            'error parsing the xml response', 'invalid xml response', 'curl error', 'ssl', 'tls',
-        ] as $needle) {
-            if (str_contains($message, $needle)) {
-                return true;
-            }
-        }
-        return false;
     }
 }
 
