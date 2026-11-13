@@ -93,10 +93,11 @@ try {
     $pdo->exec("UPDATE registry_prices SET amount=3 WHERE command='domain.transfer' AND period=0");
     foreach ([false, true] as $parentFirst) {
         $name=$parentFirst?'cancel-parent-first.com':'cancel-child-first.com';
-        $parent=transfer($name);$date=gmdate('Y-m-d\TH:i:s\Z',time()-86400*2);
+        $parent=transfer(ucfirst($name));$date=gmdate('Y-m-d\TH:i:s\Z',time()-86400*2);
         Ledger::completeJob($pdo,$parent['job_id'],'pending',['code'=>1001,'reDate'=>$date],1001);
         $cancel=job('domain.transfer',['domainname'=>$name,'op'=>'cancel']);
         Ledger::completeJob($pdo,$cancel['job_id'],'pending',['code'=>1001],1001);
+        check(raw($cancel)['parent_job_id']===$parent['job_id'],'Mixed-case cancellation links to original request');
         $cancelled=array_replace(transferInfo($name,'clientCancelled'),['reDate'=>$date]);
         check(Lifecycle::decision(raw($cancel),array_replace($cancelled,['reID'=>'other','acID'=>'shared']),'shared',raw($parent))===null,'Cancellation rejects losing-client-only correlation');
         check(!Lifecycle::settle($pdo,raw($cancel),array_replace($cancelled,['reDate'=>gmdate('Y-m-d\TH:i:s\Z')]),'shared'),'Cancellation rejects another transfer request date');
