@@ -4,6 +4,7 @@
 declare(strict_types=1);
 
 use Namingo\ResellerApi\Audit;
+use Namingo\ResellerApi\Access;
 use Namingo\ResellerApi\CommandCatalog;
 use Namingo\ResellerApi\Config;
 use Namingo\ResellerApi\Crypto;
@@ -31,6 +32,7 @@ Namingo Reseller EPP API management
   php bin/manage.php key:generate
   php bin/manage.php migrate
   php bin/manage.php user:create USERNAME CURRENCY
+  php bin/manage.php user:role RESELLER_UUID 0|1
   php bin/manage.php user:password RESELLER_UUID
   php bin/manage.php user:status RESELLER_UUID active|suspended
   php bin/manage.php token:revoke-all RESELLER_UUID
@@ -39,6 +41,11 @@ Namingo Reseller EPP API management
   php bin/manage.php registry:status REGISTRY_UUID enabled|disabled
   php bin/manage.php registry:grant RESELLER_UUID REGISTRY_UUID
   php bin/manage.php registry:revoke RESELLER_UUID REGISTRY_UUID
+  php bin/manage.php tld:add REGISTRY_UUID TLD
+  php bin/manage.php tld:status REGISTRY_UUID TLD enabled|disabled
+  php bin/manage.php tld:grant RESELLER_UUID REGISTRY_UUID TLD
+  php bin/manage.php tld:revoke RESELLER_UUID REGISTRY_UUID TLD
+  php bin/manage.php auth:prune
   php bin/manage.php price:set REGISTRY_UUID COMMAND AMOUNT CURRENCY [RESELLER_UUID|global] [TLD|-] [YEARS|0]
   php bin/manage.php price:delete REGISTRY_UUID COMMAND [RESELLER_UUID|global] [TLD|-] [YEARS|0]
   php bin/manage.php object:assign REGISTRY_UUID domain|contact|host NAME RESELLER_UUID
@@ -139,6 +146,9 @@ try {
                 }
                 $pdo->exec(file_get_contents($root . '/database/002_ownership_pricing.sql'));
             }
+            if ($exists !== false && !$pdo->query("SELECT 1 FROM schema_migrations WHERE version = '003_foundry_panel'")->fetchColumn()) {
+                $pdo->exec(file_get_contents($root . '/database/003_foundry_panel.sql'));
+            }
             $sql = file_get_contents($root . '/database/schema.sql');
             if ($sql === false) {
                 throw new RuntimeException('database/schema.sql is missing.');
@@ -176,6 +186,48 @@ try {
             sodium_memzero($password);
             Audit::record($pdo, $resellerId, 'admin.user_created', 'reseller', $resellerId);
             echo $resellerId . PHP_EOL;
+            break;
+
+        case 'user:role':
+            $resellerId = $uuid($arg(2, 'RESELLER_UUID'), 'RESELLER_UUID');
+            $role = $arg(3, '0|1');
+            if (!in_array($role, ['0', '1'], true)) {
+                throw new RuntimeException('Role must be 0 (administrator) or 1 (reseller).');
+            }
+            $pdo->prepare('UPDATE resellers SET role = ? WHERE id = ?')->execute([$role, $resellerId]);
+            Audit::record($pdo, $resellerId, 'admin.role_changed', 'reseller', $resellerId, null, ['role' => $role]);
+            echo "Role updated.\n";
+            break;
+
+        case 'tld:add':
+        case 'tld:status':
+            $registryId = $uuid($arg(2, 'REGISTRY_UUID'), 'REGISTRY_UUID');
+            $tld = Access::tld($arg(3, 'TLD'));
+            $state = $command === 'tld:add' ? 'enabled' : $arg(4, 'enabled|disabled');
+            if (!in_array($state, ['enabled', 'disabled'], true)) {
+                throw new RuntimeException('State must be enabled or disabled.');
+            }
+            $pdo->prepare('INSERT INTO registry_tlds (registry_id, tld, enabled) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)')
+                ->execute([$registryId, $tld, (int) ($state === 'enabled')]);
+            Audit::record($pdo, null, 'admin.tld_saved', 'registry', $registryId, null, ['tld' => $tld, 'state' => $state]);
+            echo "TLD saved.\n";
+            break;
+
+        case 'tld:grant':
+        case 'tld:revoke':
+            $resellerId = $uuid($arg(2, 'RESELLER_UUID'), 'RESELLER_UUID');
+            $registryId = $uuid($arg(3, 'REGISTRY_UUID'), 'REGISTRY_UUID');
+            $tld = Access::tld($arg(4, 'TLD'));
+            $pdo->prepare('INSERT INTO reseller_tlds (reseller_id, registry_id, tld, enabled) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)')
+                ->execute([$resellerId, $registryId, $tld, (int) ($command === 'tld:grant')]);
+            Audit::record($pdo, $resellerId, 'admin.' . str_replace(':', '_', $command), 'registry', $registryId, null, ['tld' => $tld]);
+            echo "TLD permission saved.\n";
+            break;
+
+        case 'auth:prune':
+            $pdo->exec('DELETE FROM auth_login_limits WHERE window_started < UTC_TIMESTAMP(6) - INTERVAL 1 DAY');
+            $pdo->exec('DELETE FROM auth_tokens WHERE expires_at < UTC_TIMESTAMP(6) - INTERVAL 1 DAY');
+            echo "Expired login limits and tokens pruned.\n";
             break;
 
         case 'user:password':

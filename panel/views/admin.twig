@@ -1,0 +1,76 @@
+{% extends 'layouts/app.twig' %}
+{% import 'partials/table.twig' as tables %}
+{% import 'partials/forms.twig' as forms %}
+{% block content %}
+<datalist id="resellers">{% for item in resellers %}<option value="{{ item.id }}">{{ item.username }}</option>{% endfor %}</datalist>
+<datalist id="registries">{% for item in registries %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</datalist>
+<div class="action-grid mb-4">
+{% if section == 'resellers' %}
+<div class="card card-body"><h2 class="card-title">Add a reseller</h2><form method="post">{{ forms.hidden('user.create', csrf) }}
+  {{ forms.input('username', 'Username') }}{{ forms.input('currency', 'Currency', 'text', 'EUR') }}
+  {{ forms.input('password', 'Password', 'password') }}{{ forms.input('password_confirm', 'Confirm password', 'password') }}
+  <p class="text-secondary">New accounts have reseller role 1. Their API and panel credentials are shared.</p><button class="btn btn-primary">Create reseller</button>
+</form></div>
+<div class="card card-body"><h2 class="card-title">Account status</h2><form method="post">{{ forms.hidden('user.status', csrf) }}
+  {{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}{{ forms.select('status', 'Status', {'active':'Active', 'suspended':'Suspended'}) }}<button class="btn btn-primary">Save status</button>
+</form><hr><h2 class="card-title">Role</h2><form method="post">{{ forms.hidden('user.role', csrf) }}
+  {{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}{{ forms.select('role', 'Role', {'1':'Reseller', '0':'Administrator — full control'}) }}<button class="btn btn-outline-primary">Save role</button>
+</form></div>
+<div class="card card-body"><h2 class="card-title">Reset API and panel password</h2><form method="post">{{ forms.hidden('user.password', csrf) }}
+  {{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}{{ forms.input('password', 'New password', 'password') }}{{ forms.input('password_confirm', 'Confirm password', 'password') }}
+  <p class="text-secondary">Resets login lockout and revokes existing tokens and panel sessions.</p><button class="btn btn-primary">Reset password</button>
+</form><hr><form method="post">{{ forms.hidden('tokens.revoke', csrf) }}{{ forms.input('reseller_id', 'Revoke all sessions for reseller UUID', 'text', '', 'resellers') }}<button class="btn btn-outline-danger">Revoke tokens and sessions</button></form></div>
+{% elseif section == 'registries' %}
+<div class="card card-body"><h2 class="card-title">Add or update a registry</h2><form method="post">{{ forms.hidden('registry.save', csrf) }}
+  {{ forms.input('registry_id', 'Existing registry UUID (blank to add)', 'text', '', 'registries', false) }}{{ forms.input('name', 'Display name') }}
+  <label class="form-label mb-3">EPP profile<select class="form-select" name="profile">{% for profile in profiles %}<option>{{ profile }}</option>{% endfor %}</select></label>
+  <label class="form-label mb-3">Full registry configuration JSON<textarea class="form-control" name="config_json" rows="8" required autocomplete="off" spellcheck="false"></textarea></label>
+  <p class="text-secondary">Use deploy/registry.example.json. Stored credentials are encrypted and never displayed. Keep one registry UUID per upstream account; updates must remain on that same account.</p><button class="btn btn-primary">Save registry</button>
+</form></div>
+<div class="card card-body"><h2 class="card-title">Registry state</h2><form method="post">{{ forms.hidden('registry.status', csrf) }}
+  {{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{{ forms.enabled() }}<button class="btn btn-primary">Save state</button>
+</form><hr><h2 class="card-title">Reseller access</h2><form method="post">{{ forms.hidden('registry.access', csrf) }}
+  {{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}{{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{{ forms.enabled() }}<button class="btn btn-outline-primary">Save access</button>
+</form></div>
+{% elseif section == 'tlds' %}
+<div class="card card-body"><h2 class="card-title">Add or enable a TLD</h2><form method="post">{{ forms.hidden('tld.save', csrf) }}
+  {{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{{ forms.input('tld', 'TLD / suffix (com or co.uk)') }}{{ forms.enabled() }}<button class="btn btn-primary">Save TLD</button>
+</form></div>
+<div class="card card-body"><h2 class="card-title">Permit a TLD for a reseller</h2><form method="post">{{ forms.hidden('tld.access', csrf) }}
+  {{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}{{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{{ forms.input('tld', 'TLD / suffix') }}{{ forms.enabled() }}
+  <p class="text-secondary">Grant registry access first. Both the registry and TLD permissions must be enabled. The API enforces these permissions too.</p><button class="btn btn-primary">Save permission</button>
+</form></div>
+{% elseif section == 'prices' %}
+<div class="card card-body"><h2 class="card-title">Set or remove a price</h2><form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
+  {{ forms.select('action', 'Action', {'price.set':'Set exact price', 'price.delete':'Remove exact price row'}) }}
+  {{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{{ forms.input('scope', 'Scope (global or reseller UUID)', 'text', 'global', 'resellers') }}
+  <label class="form-label mb-3">Command<select class="form-select" name="command">{% for command in commands %}<option>{{ command }}</option>{% endfor %}</select></label>
+  {{ forms.input('tld', 'TLD (blank for registry-wide non-term operation)', 'text', '', '', false) }}
+  {{ forms.input('period', 'Years (1–10), or 0 for per operation', 'number', '0') }}{{ forms.input('amount', 'Total amount; 0 explicitly means free', 'text', '', '', false) }}{{ forms.input('currency', 'Currency', 'text', 'EUR', '', false) }}
+  <p class="text-secondary">Registration, renewal and incoming transfers need a TLD and exact total for the term. Add the TLD first. Deleting a price may expose a configured global fallback; absent prices block submission.</p><button class="btn btn-primary">Apply price change</button>
+</form></div>
+{% elseif section == 'deposits' %}
+<div class="card card-body"><h2 class="card-title">Decide a pending deposit</h2><form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
+  {{ forms.select('action', 'Action', {'deposit.approve':'Approve and credit wallet', 'deposit.reject':'Reject'}) }}{{ forms.input('id', 'Deposit UUID') }}
+  {{ forms.confirmed('I independently verified receipt of funds before approval, or verified the reason for rejection.') }}<button class="btn btn-primary">Save decision</button>
+</form></div>
+{% elseif section == 'jobs' %}
+<div class="card card-body"><h2 class="card-title">Resolve an unknown job</h2><form method="post">{{ forms.hidden('job.resolve', csrf) }}
+  {{ forms.input('id', 'Unknown job UUID') }}{{ forms.select('resolution', 'Verified outcome', {'release':'Did not complete — release hold', 'charge':'Completed — charge hold and apply ownership'}) }}
+  {{ forms.confirmed('I verified the final registry outcome and the original worker is no longer running.') }}<button class="btn btn-primary">Resolve job</button>
+</form></div>
+<div class="card card-body"><h2 class="card-title">Mark a stranded job unknown</h2><form method="post">{{ forms.hidden('job.mark_unknown', csrf) }}
+  {{ forms.input('id', 'Processing job UUID') }}{{ forms.confirmed('The original worker has stopped and its registry outcome needs reconciliation.') }}<button class="btn btn-outline-primary">Mark unknown, retain hold</button>
+</form></div>
+{% elseif section == 'ownership' %}
+<div class="card card-body"><h2 class="card-title">Import verified existing ownership</h2><form method="post">{{ forms.hidden('object.assign', csrf) }}
+  {{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}
+  {{ forms.select('object_type', 'Type', {'domain':'Domain', 'contact':'Contact', 'host':'Host / NSSET'}) }}{{ forms.input('object_name', 'ASCII name or identifier') }}
+  <p class="text-secondary">Only import independently verified existing objects. This never changes registry ownership or replaces an existing mapping.</p><button class="btn btn-primary">Import ownership</button>
+</form></div>
+{% endif %}
+</div>
+<div class="card">{{ tables.show(rows, columns) }}</div>
+{% include 'partials/pagination.twig' %}
+{% if grants is defined %}<div class="card mt-4"><div class="card-header"><h2 class="card-title">Permission records (up to 100)</h2></div>{{ tables.show(grants, grant_columns) }}</div>{% endif %}
+{% endblock %}

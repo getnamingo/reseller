@@ -1,0 +1,2 @@
+{% extends 'layouts/app.twig' %}
+{% block content %}<div class="card card-body"><p>The operation was not completed. Return to the relevant page to review the form or current records.</p><a href="{{ user ? '/' : '/login' }}">{{ user ? 'Dashboard' : 'Sign in' }}</a></div>{% endblock %}

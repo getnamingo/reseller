@@ -1,0 +1,249 @@
+<?php
+
+declare(strict_types=1);
+
+use GuzzleHttp\Client;
+use GuzzleHttp\Handler\MockHandler;
+use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Middleware;
+use Namingo\ResellerApi\Access;
+use Namingo\ResellerApi\Admin;
+use Namingo\ResellerApi\ApiException;
+use Namingo\ResellerApi\Auth;
+use Namingo\ResellerApi\CommandCatalog;
+use Namingo\ResellerApi\Crypto;
+use Namingo\ResellerApi\Db;
+use Namingo\ResellerApi\EppWorker;
+use Namingo\ResellerApi\Ledger;
+use Namingo\ResellerApi\PanelApi;
+use Namingo\ResellerApi\PanelController;
+use Namingo\ResellerApi\PanelData;
+use Namingo\ResellerApi\PanelSession;
+use Namingo\ResellerApi\Util;
+use Nyholm\Psr7\Response;
+use Nyholm\Psr7\ServerRequest;
+use Slim\Views\Twig;
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+$dsn = getenv('TEST_MYSQL_DSN') ?: 'mysql:host=127.0.0.1;port=3306';
+$options = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    PDO::ATTR_EMULATE_PREPARES => false, PDO::ATTR_STRINGIFY_FETCHES => true];
+$adminDb = new PDO($dsn, getenv('TEST_MYSQL_USER') ?: 'root', getenv('TEST_MYSQL_PASSWORD') ?: '', $options);
+$db = 'reseller_panel_test_' . bin2hex(random_bytes(6));
+$adminDb->exec("CREATE DATABASE `$db`");
+$pdo = new PDO($dsn . ';dbname=' . $db, getenv('TEST_MYSQL_USER') ?: 'root', getenv('TEST_MYSQL_PASSWORD') ?: '', $options);
+$_ENV['APP_MASTER_KEY'] = 'base64:' . base64_encode(random_bytes(32));
+$_ENV['APP_ENV'] = 'local';
+$_ENV['PANEL_ORIGIN'] = 'http://localhost';
+$sessionRoot = sys_get_temp_dir() . '/' . $db;
+PanelSession::start($sessionRoot);
+$assertions = 0;
+function verify(bool $ok, string $message): void
+{
+    global $assertions;
+    if (!$ok) {
+        throw new RuntimeException($message);
+    }
+    ++$assertions;
+}
+function denied(string $error, callable $call): void
+{
+    try {
+        $call();
+    } catch (ApiException $e) {
+        verify($e->errorCode === $error, 'Expected ' . $error . ', got ' . $e->errorCode);
+        return;
+    }
+    throw new RuntimeException('Expected ' . $error);
+}
+function request(string $path, string $method = 'GET', array $data = [], bool $csrf = true, string $origin = ''): Response
+{
+    global $panel;
+    if ($method === 'POST' && $csrf) {
+        $data['csrf'] = $_SESSION['csrf'];
+    }
+    $request = new ServerRequest($method, 'http://localhost' . $path, $origin === '' ? [] : ['Origin' => $origin], '', '1.1', ['REMOTE_ADDR' => '127.0.0.1']);
+    return $panel->handle($request->withParsedBody($data), new Response());
+}
+function body(Response $response): string { return (string) $response->getBody(); }
+function action(string $action, array $params): string
+{
+    global $pdo, $rootUser;
+    return Admin::perform($pdo, $rootUser, $action, $params, '127.0.0.1');
+}
+function login(string $username, string $password): void
+{
+    global $pdo;
+    PanelSession::login(Auth::login($pdo, $username, $password, '127.0.0.1'));
+}
+
+try {
+    $pdo->exec(file_get_contents(dirname(__DIR__) . '/database/schema.sql'));
+    $rootUser = Util::uuid();
+    $password = 'correct horse battery staple';
+    $hash = password_hash($password, PASSWORD_ARGON2ID);
+    $pdo->prepare("INSERT INTO resellers (id, username, password_hash, currency, role) VALUES (?, 'administrator', ?, 'EUR', 0)")->execute([$rootUser, $hash]);
+    $pdo->prepare("INSERT INTO wallets (reseller_id, currency, available_balance) VALUES (?, 'EUR', 500)")->execute([$rootUser]);
+    $a = action('user.create', ['username' => 'reseller-a', 'currency' => 'EUR', 'password' => $password, 'password_confirm' => $password]);
+    $b = action('user.create', ['username' => 'reseller-b', 'currency' => 'EUR', 'password' => $password, 'password_confirm' => $password]);
+    $pdo->prepare('UPDATE wallets SET available_balance = 100 WHERE reseller_id IN (?, ?)')->execute([$a, $b]);
+    $config = ['connection' => ['host' => 'registry.invalid', 'port' => 700], 'login' => ['clID' => 'shared', 'pw' => 'upstream-secret']];
+    $registry = action('registry.save', ['name' => 'Shared registry', 'profile' => 'generic', 'config_json' => Util::json($config)]);
+    foreach ([$a, $b, $rootUser] as $reseller) {
+        action('registry.access', ['registry_id' => $registry, 'reseller_id' => $reseller, 'enabled' => '1']);
+    }
+    foreach (['com', 'net', 'uk', 'co.uk'] as $tld) {
+        action('tld.save', ['registry_id' => $registry, 'tld' => $tld, 'enabled' => '1']);
+    }
+    foreach (['com', 'uk', 'co.uk'] as $tld) {
+        action('tld.access', ['registry_id' => $registry, 'reseller_id' => $a, 'tld' => $tld, 'enabled' => '1']);
+    }
+    action('tld.access', ['registry_id' => $registry, 'reseller_id' => $b, 'tld' => 'net', 'enabled' => '1']);
+    $basePrice = ['registry_id' => $registry, 'scope' => 'global', 'command' => 'domain.create', 'tld' => 'com', 'period' => '1', 'amount' => '12', 'currency' => 'EUR'];
+    action('price.set', $basePrice);
+    action('price.set', array_replace($basePrice, ['scope' => $a, 'amount' => '9']));
+    action('price.set', array_replace($basePrice, ['scope' => $b, 'amount' => '999']));
+    action('price.set', array_replace($basePrice, ['tld' => 'net', 'amount' => '7']));
+    action('price.set', array_replace($basePrice, ['command' => 'domain.check', 'tld' => '', 'period' => '0', 'amount' => '0']));
+    denied('invalid_price_scope', fn () => action('price.set', array_replace($basePrice, ['tld' => '', 'period' => '0'])));
+    denied('admin_required', fn () => Admin::perform($pdo, $a, 'user.role', ['reseller_id' => $a, 'role' => '0'], '127.0.0.1'));
+    denied('invalid_state', fn () => action('user.role', ['reseller_id' => $rootUser, 'role' => '1']));
+    $prices = PanelData::prices($pdo, $a);
+    verify(count($prices) === 2 && $prices[0]['amount'] !== '999.0000', 'Only effective own/global prices for permitted TLDs are visible');
+    verify(count(array_filter($prices, fn ($p) => $p['amount'] === '9.0000')) === 1, 'Own override replaces same global price');
+    denied('tld_not_permitted', fn () => Access::domains($pdo, $registry, $a, 'domain.check', ['domains' => ['other.net']]));
+    Access::domains($pdo, $registry, $a, 'domain.check', ['domains' => ['mine.com', 'mine.co.uk']]);
+    action('tld.access', ['registry_id' => $registry, 'reseller_id' => $a, 'tld' => 'co.uk', 'enabled' => '0']);
+    denied('tld_not_permitted', fn () => Access::domains($pdo, $registry, $a, 'domain.check', ['domains' => ['mine.co.uk']]));
+    action('tld.save', ['registry_id' => $registry, 'tld' => 'com', 'enabled' => '0']);
+    denied('tld_not_permitted', fn () => Ledger::createJob($pdo, $a, $registry, 'domain.create', Util::uuid(), ['domainname' => 'blocked.com', 'period' => 1]));
+    action('tld.save', ['registry_id' => $registry, 'tld' => 'com', 'enabled' => '1']);
+    denied('invalid_domains', fn () => Access::domains($pdo, $registry, $a, 'domain.check', ['domains' => []]));
+    denied('invalid_domains', fn () => Access::domains($pdo, $registry, $a, 'domain.check', ['domains' => array_fill(0, 51, 'mine.com')]));
+
+    $history = [];
+    $mock = new MockHandler();
+    $stack = HandlerStack::create($mock); $stack->push(Middleware::history($history));
+    $api = new PanelApi(new Client(['handler' => $stack, 'base_uri' => 'http://localhost/']));
+    $view = Twig::create(dirname(__DIR__) . '/panel/views', ['cache' => false, 'autoescape' => 'html']);
+    foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator(dirname(__DIR__) . '/panel/views')) as $file) {
+        if ($file->isFile() && str_ends_with($file->getFilename(), '.twig')) {
+            $view->getEnvironment()->load(substr($file->getPathname(), strlen(dirname(__DIR__) . '/panel/views/')));
+        }
+    }
+    $panel = new PanelController($pdo, $view, $api);
+    verify(request('/')->getStatusCode() === 303, 'Guest redirects to login');
+    verify(request('/login')->getStatusCode() === 200, 'Login page renders');
+    verify(request('/login', 'POST', ['username' => 'reseller-a', 'password' => $password], false)->getStatusCode() === 403, 'Login CSRF enforced');
+    verify(request('/login', 'POST', ['username' => 'reseller-a', 'password' => $password], true, 'https://attacker.invalid')->getStatusCode() === 403, 'Cross-origin login blocked');
+    $oldSession = session_id();
+    verify(request('/login', 'POST', ['username' => 'reseller-a', 'password' => $password])->getStatusCode() === 303, 'API credentials log in to panel');
+    verify(session_id() !== $oldSession, 'Session ID rotates at login');
+    $cookie = session_get_cookie_params();
+    verify($cookie['httponly'] && $cookie['samesite'] === 'Strict' && $cookie['path'] === '/', 'Cookie protections');
+    $bearer = $_SESSION['api_token'];
+    verify(Auth::authenticate($pdo, 'Bearer ' . $bearer)['id'] === $a, 'Panel uses real scoped API token');
+    action('object.assign', ['registry_id' => $registry, 'reseller_id' => $a, 'object_type' => 'domain', 'object_name' => 'own.com']);
+    action('object.assign', ['registry_id' => $registry, 'reseller_id' => $b, 'object_type' => 'domain', 'object_name' => 'private.net']);
+    foreach (['/', '/account', '/prices', '/access', '/wallet', '/domains', '/checks'] as $path) {
+        $response = request($path);
+        verify($response->getStatusCode() === 200, 'Reseller page renders: ' . $path . ' ' . body($response));
+        verify(!str_contains(body($response), $bearer) && !str_contains(body($response), 'upstream-secret'), 'No bearer token or registry secrets in HTML');
+    }
+    $objects = body(request('/domains'));
+    verify(str_contains($objects, 'own.com') && !str_contains($objects, 'private.net'), 'Object list scoped to current reseller');
+    verify(!str_contains(body(request('/prices')), '999.0000'), 'Other reseller price override hidden');
+    foreach (['resellers', 'registries', 'tlds', 'prices', 'deposits', 'jobs', 'ownership'] as $section) {
+        verify(request('/admin/' . $section)->getStatusCode() === 403, 'Reseller cannot view admin page');
+        verify(request('/admin/' . $section, 'POST', ['action' => 'user.role', 'reseller_id' => $a, 'role' => '0'])->getStatusCode() === 403, 'Reseller cannot submit admin actions');
+    }
+    verify(request('/checks', 'POST', ['registry_id' => $registry, 'key' => Util::uuid(), 'domains' => 'other.net'])->getStatusCode() === 403, 'Panel check respects TLD grants');
+    verify(count($history) === 0, 'Invalid panel check never calls API');
+    $checkId = Util::uuid();
+    $checkJob = ['job_uuid' => $checkId, 'registry_name' => 'Shared registry', 'command' => 'domain.check', 'status' => 'succeeded',
+        'price' => '0.0000', 'currency' => 'EUR', 'result' => ['domains' => [['name' => 'available.com', 'avail' => true, 'reason' => ''], ['name' => 'taken.com', 'avail' => false, 'reason' => '<script>alert(1)</script>']]]];
+    $mock->append(new Response(200, [], Util::json(['data' => $checkJob])));
+    $key = Util::uuid();
+    $response = request('/checks', 'POST', ['registry_id' => $registry, 'key' => $key, 'domains' => "available.com\ntaken.com"]);
+    verify($response->getHeaderLine('Location') === '/checks/' . $checkId, 'Check redirects to API result');
+    verify($history[0]['request']->getUri()->getPath() === '/v1/epp/domain.check'
+        && $history[0]['request']->getHeaderLine('Authorization') === 'Bearer ' . $bearer
+        && $history[0]['request']->getHeaderLine('Idempotency-Key') === $key, 'Only availability endpoint with scoped token and idempotency key');
+    verify(json_decode((string) $history[0]['request']->getBody(), true)['params']['domains'] === ['available.com', 'taken.com'], 'Checks sent natively through API JSON');
+    $mock->append(new Response(200, [], Util::json(['data' => $checkJob])));
+    $result = body(request('/checks/' . $checkId));
+    verify(str_contains($result, 'Available') && str_contains($result, 'Unavailable'), 'Readable check result');
+    verify(!str_contains($result, '<script>alert(1)</script>') && str_contains($result, '&lt;script&gt;'), 'Registry result HTML escaped');
+    $mock->append(new Response(403, [], Util::json(['error' => ['message' => 'Job unavailable.']])));
+    verify(request('/checks/' . Util::uuid())->getStatusCode() === 403, 'API denies foreign job reads');
+    $mock->append(new Response(200, [], Util::json(['data' => array_replace($checkJob, ['command' => 'domain.create'])])));
+    verify(request('/checks/' . Util::uuid())->getStatusCode() === 403, 'Panel does not expose provisioning job results');
+    verify(request('/domains', 'POST', [])->getStatusCode() === 405, 'No domain registration or mutation route');
+
+    login('administrator', $password);
+    foreach (['resellers', 'registries', 'tlds', 'prices', 'deposits', 'jobs', 'ownership'] as $section) {
+        verify(request('/admin/' . $section)->getStatusCode() === 200, 'Admin page renders: ' . $section);
+    }
+    verify(request('/admin/tlds', 'POST', ['action' => 'tld.save', 'registry_id' => $registry, 'tld' => 'test', 'enabled' => '1'], false)->getStatusCode() === 403, 'Admin mutations require CSRF');
+    verify(request('/admin/tlds', 'POST', ['action' => 'user.role', 'reseller_id' => $a, 'role' => '0'])->getStatusCode() === 422, 'Admin action allowlist tied to page');
+    $created = request('/admin/resellers', 'POST', ['action' => 'user.create', 'username' => 'panel-created', 'currency' => 'EUR', 'password' => $password, 'password_confirm' => $password]);
+    verify($created->getStatusCode() === 303 && (int) $pdo->query("SELECT role FROM resellers WHERE username = 'panel-created'")->fetchColumn() === 1, 'Panel creates role-1 reseller in main tables');
+    $pdo->prepare('UPDATE resellers SET role = 1 WHERE id = ?')->execute([$rootUser]);
+    verify(request('/admin/resellers')->getStatusCode() === 403, 'Role demotion takes effect in current panel session');
+    $pdo->prepare('UPDATE resellers SET role = 0 WHERE id = ?')->execute([$rootUser]);
+    login('reseller-a', $password);
+    action('tokens.revoke', ['reseller_id' => $a]);
+    verify(request('/wallet')->getHeaderLine('Location') === '/login', 'API token revocation invalidates panel session');
+    login('reseller-a', $password);
+    $_SESSION['last_seen'] = time() - 3600;
+    verify(request('/wallet')->getHeaderLine('Location') === '/login', 'Idle timeout enforced');
+    login('reseller-a', $password);
+    action('user.password', ['reseller_id' => $a, 'password' => 'replacement long password', 'password_confirm' => 'replacement long password']);
+    verify(request('/wallet')->getHeaderLine('Location') === '/login', 'Password reset invalidates active panel session');
+    denied('invalid_credentials', fn () => Auth::login($pdo, 'reseller-a', $password, '192.0.2.3'));
+    verify(Auth::login($pdo, 'reseller-a', 'replacement long password', '192.0.2.3')['reseller_uuid'] === $a, 'New password works for API too');
+    $_ENV['API_LOGIN_LIMIT_PER_MINUTE'] = '2';
+    denied('invalid_credentials', fn () => Auth::login($pdo, 'unknown-account', 'wrong', '192.0.2.4'));
+    denied('invalid_credentials', fn () => Auth::login($pdo, 'unknown-account', 'wrong', '192.0.2.4'));
+    denied('rate_limited', fn () => Auth::login($pdo, 'reseller-a', 'replacement long password', '192.0.2.4'));
+
+    // A permission revoked after enqueue must stop the worker before any EPP connection.
+    $job = Ledger::createJob($pdo, $a, $registry, 'domain.create', Util::uuid(), ['domainname' => 'queued.com', 'period' => 1]);
+    action('tld.access', ['registry_id' => $registry, 'reseller_id' => $a, 'tld' => 'com', 'enabled' => '0']);
+    (new ReflectionProperty(Db::class, 'pdo'))->setValue(null, $pdo);
+    $processed = EppWorker::process($job['job_id']);
+    verify($processed['status'] === 'rejected', 'Worker rechecks TLD before connecting');
+    $finished = Ledger::fetchJob($pdo, $job['job_id'], $a);
+    verify(str_contains(Util::json($finished['result']), 'TLD is unavailable'), 'Worker rejected specifically on TLD access');
+    verify(!(bool) $pdo->query("SELECT 1 FROM object_ownership WHERE object_name = 'queued.com'")->fetchColumn(), 'Rejected worker releases ownership reservation');
+
+    // Upgrade an existing v2 database; no existing account is made administrator.
+    $pdo->exec('DROP TABLE reseller_tlds, registry_tlds, auth_login_limits');
+    $pdo->exec('ALTER TABLE resellers DROP CONSTRAINT chk_reseller_role, DROP COLUMN role');
+    $pdo->exec("DELETE FROM schema_migrations WHERE version = '003_foundry_panel'");
+    $pdo->exec(file_get_contents(dirname(__DIR__) . '/database/003_foundry_panel.sql'));
+    verify((int) $pdo->query('SELECT COUNT(*) FROM resellers WHERE role = 0')->fetchColumn() === 0, 'Migration defaults every existing account to reseller');
+    verify((int) $pdo->query('SELECT COUNT(*) FROM registry_tlds')->fetchColumn() === 2, 'Migration backfills explicitly priced zones');
+    verify((int) $pdo->query('SELECT COUNT(*) FROM reseller_tlds')->fetchColumn() === 6, 'Migration grants known zones to existing registry members');
+    verify((int) $pdo->query('SELECT COUNT(*) FROM schema_migrations')->fetchColumn() === 3, 'Migration version recorded');
+    $_ENV['APP_ENV'] = 'production'; $_ENV['PANEL_ORIGIN'] = 'https://panel.example.test';
+    $_SERVER['HTTPS'] = '';
+    try {
+        PanelSession::start($sessionRoot);
+        throw new LogicException('Plain HTTP was accepted in production');
+    } catch (RuntimeException $e) {
+        verify(str_contains($e->getMessage(), 'requires HTTPS'), 'Production panel refuses untrusted plaintext transport');
+    }
+    session_destroy(); $_COOKIE = []; $_SERVER['HTTPS'] = 'on';
+    PanelSession::start($sessionRoot);
+    verify(session_get_cookie_params()['secure'] && str_starts_with(session_name(), '__Host-'), 'Production uses host-only Secure session cookie');
+    echo "PASS: {$assertions} panel/access assertions\n";
+} finally {
+    if ($pdo->inTransaction()) { $pdo->rollBack(); }
+    Db::reset();
+    $pdo = null;
+    $adminDb->exec("DROP DATABASE `$db`");
+    session_destroy();
+    foreach (glob($sessionRoot . '/var/panel-sessions/*') ?: [] as $file) { unlink($file); }
+    @rmdir($sessionRoot . '/var/panel-sessions'); @rmdir($sessionRoot . '/var'); @rmdir($sessionRoot);
+}

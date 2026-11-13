@@ -2,7 +2,7 @@
 
 A compact PHP 8.5/Swoole JSON API for domain resellers. It authenticates resellers, keeps a MariaDB wallet and append-only ledger, encrypts registry credentials and job payloads, and runs each blocking EPP operation in a Swoole task worker using [Namingo EPP Client](https://github.com/getnamingo/epp-client).
 
-The project deliberately stays small: two runtime source files, one HTTP entry point, one administration CLI, one schema, and one Guzzle client example.
+The API keeps a compact core, with one HTTP entry point, one administration CLI and a Guzzle client example. An optional Foundry-based reseller panel uses the same database.
 
 ## What is implemented
 
@@ -167,6 +167,8 @@ Add and grant it:
 ```bash
 sudo -u namingo-api php8.5 bin/manage.php registry:add generic "Example Registry" registry.json
 sudo -u namingo-api php8.5 bin/manage.php registry:grant RESELLER_UUID REGISTRY_UUID
+sudo -u namingo-api php8.5 bin/manage.php tld:add REGISTRY_UUID com
+sudo -u namingo-api php8.5 bin/manage.php tld:grant RESELLER_UUID REGISTRY_UUID com
 ```
 
 The CLI encrypts the whole normalized registry JSON before insertion. PEM material is briefly written as mode `0600` under `/run/namingo-epp-api` by a task worker and removed in `finally`.
@@ -278,7 +280,7 @@ Content-Type: application/json
 {"username":"reseller1","password":"correct horse battery staple"}
 ```
 
-Submit a read command:
+Submit a read command (replace `.test` examples with names under an enabled TLD granted to your account):
 
 ```http
 POST /v1/epp/domain.check
@@ -398,3 +400,124 @@ TEST_MYSQL_USER=root TEST_MYSQL_PASSWORD=secret php tests/isolation_pricing.php
 The suite covers ownership and contact references, concurrent create reservations,
 unknown/rejected/deleted objects, idempotency, FRED/LT identifiers, pricing by zone and
 term, longest-zone precedence, explicit free operations, wallet rollback and schema upgrade.
+
+## Foundry reseller panel
+
+The optional PHP-FPM web panel uses [Argora Foundry](https://github.com/terborahq/foundry)'s
+Slim 4 / Twig / Tabler foundation. It shares the **same reseller database and API login**;
+there is no second users table, separate balance, or separate password. The panel uses
+the existing Argon2id verifier, account lockout and API token revocation, plus a private
+server-side session, session ID rotation, idle expiry, HttpOnly/Secure/SameSite cookies
+and CSRF protection. The API token stays on the server and is never placed in browser
+storage or rendered HTML. Password resets, suspensions and token revocation invalidate
+panel sessions on their next request. API and panel logins share a persistent per-IP
+rate limit; the panel does not trust client-supplied forwarding headers.
+
+Resellers can view their account, wallet/ledger, deposits, effective global/override
+prices, registry/TLD permissions and owned objects. Availability checks submit only
+`domain.check` through the API with the current reseller's token; results are read
+through the API too. They use the configured check price (including explicit zero),
+with an idempotency key per form submission. Refreshing a result only polls that job.
+There is no domain registration, domain management or public account-registration route.
+
+Role **0 is administrator**, role **1 is reseller**. Role 0 has explicit server-side
+checks on every administration request and action; roles are reread from MariaDB,
+not trusted from the session. The administration pages cover reseller creation,
+password resets, suspension, roles, token revocation, encrypted registry configuration,
+registry and TLD access, prices, deposit decisions, unknown-job reconciliation and
+verified ownership imports. Financial and registry reconciliation require the operator
+to independently verify the outcome, as with the CLI. Registry credentials cannot be
+viewed back in the panel. Use one registry UUID per upstream account as before.
+
+### Install or upgrade
+
+1. Stop submissions/workers during the database upgrade and back up the database.
+   Run `composer install --no-dev --classmap-authoritative`, then `php8.5 bin/manage.php migrate`.
+   Composer installs the panel dependencies and copies just the required Tabler CSS/JS
+   into `panel/public/assets`. To recopy them later, run `composer panel-assets`.
+2. Migration 003 adds `resellers.role` (default 1), `registry_tlds`, `reseller_tlds`
+   and `auth_login_limits` **in the main database**. Existing explicitly priced zones
+   are imported and granted to existing registry members to preserve their known
+   access. Review these grants; add and permit any unpriced zones before resuming.
+   There are no automatic administrator accounts.
+3. Create/promote the first administrator from the CLI:
+
+   ```bash
+   php8.5 bin/manage.php user:create administrator EUR
+   php8.5 bin/manage.php user:role ADMIN_RESELLER_UUID 0
+   ```
+
+   Sign in with that account's existing API username/password. New accounts created
+   in the panel are resellers until explicitly promoted. Administrators still need
+   normal registry/TLD grants for their own availability checks.
+4. Configure `PANEL_ORIGIN` (the exact public HTTPS origin), `PANEL_API_URL` (the API
+   root URL), optionally `PANEL_API_CA`, and `PANEL_SESSION_DIR` in the same `.env`.
+   API HTTPS certificate verification stays enabled. Plain HTTP is permitted for a
+   loopback API connection only. Set `PANEL_IDLE_SECONDS` as desired (default 1800).
+5. Install PHP 8.5 FPM and configure a separate panel hostname with **only
+   `panel/public` as the document root**, for example `deploy/Caddyfile.panel`.
+   Never expose the repository root, `.env`, `vendor`, or session directory.
+   Allow the PHP-FPM user to read the application/.env and create its private session
+   files; for the installation paths and accounts above:
+
+   ```bash
+   sudo usermod -aG namingo-api www-data
+   sudo install -d -o www-data -g www-data -m 0700 /var/lib/namingo-api/panel-sessions
+   sudo systemctl restart php8.5-fpm
+   ```
+
+   Caddy handles public TLS and sets FastCGI `HTTPS=on`. With another trusted TLS
+   proxy, set the equivalent server parameter; the panel does not trust arbitrary
+   `X-Forwarded-Proto` headers. Cookies are host-only. Multiple panel nodes need a
+   shared private PHP session store. Keep the session directory outside the web root.
+6. Start the API workers and web panel. Add registry/TLD permissions and explicit
+   prices as needed. Test an availability check with an actual reseller account.
+
+For a local HTTP smoke test only, use `APP_ENV=local`, a loopback `PANEL_ORIGIN`,
+its matching port, and a private writable `PANEL_SESSION_DIR`:
+
+```bash
+php8.5 -S 127.0.0.1:8080 -t panel/public panel/public/index.php
+```
+
+Serve the generated static assets through your web server in production; the PHP
+built-in server is only for local testing.
+
+### TLD administration and enforcement
+
+Registry access alone no longer authorizes every suffix. Domains must match an
+enabled `registry_tlds` row and an explicit enabled reseller grant. The longest
+configured suffix wins, including disabled/revoked rows; revoking `co.uk` cannot be
+bypassed through a broader `uk` grant. Checks accept 1–50 domain names. Both enqueue
+and the worker recheck TLD access; the worker also rechecks account/registry access
+before connecting. Other object commands retain the existing ownership isolation.
+
+The equivalent CLI commands are:
+
+```bash
+php8.5 bin/manage.php tld:add REGISTRY_UUID com
+php8.5 bin/manage.php registry:grant RESELLER_UUID REGISTRY_UUID
+php8.5 bin/manage.php tld:grant RESELLER_UUID REGISTRY_UUID com
+php8.5 bin/manage.php tld:revoke RESELLER_UUID REGISTRY_UUID com
+php8.5 bin/manage.php tld:status REGISTRY_UUID com disabled
+# Run daily to remove stale rate-limit buckets and expired authentication tokens.
+php8.5 bin/manage.php auth:prune
+```
+
+TLD permissions and prices are independent: allowing a TLD does not create a price,
+and setting a price does not permit that TLD. New TLDs need both where applicable.
+Contact/host operations still need explicit configured prices, including zero.
+
+Run the panel suite after Composer installation against a disposable database server:
+
+```bash
+TEST_MYSQL_DSN='mysql:host=127.0.0.1;port=3306' \
+TEST_MYSQL_USER=root TEST_MYSQL_PASSWORD=secret php tests/panel.php
+```
+
+It creates/removes its own randomly named database and uses a mocked HTTP API for
+availability. It tests real authentication, HTML views, administrator authorization,
+CSRF/origin checks, role changes, session/token revocation, scoped prices and objects,
+TLD revocation before EPP execution, and upgrading a v2 database. No live registry
+commands are sent. Upstream Foundry attribution is in `panel/UPSTREAM.md` and its MIT
+notice is preserved in `panel/LICENSE-FOUNDRY`.

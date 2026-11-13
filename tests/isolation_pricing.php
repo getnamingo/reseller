@@ -9,6 +9,7 @@ use Namingo\ResellerApi\Ownership;
 use Namingo\ResellerApi\Util;
 
 require dirname(__DIR__) . '/src/Core.php';
+require dirname(__DIR__) . '/src/Access.php';
 
 // Creates and drops only a uniquely named test database. No registry/network commands are sent.
 $dsn = getenv('TEST_MYSQL_DSN') ?: 'mysql:host=127.0.0.1;port=3306';
@@ -92,6 +93,12 @@ try {
     $pdo->prepare("INSERT INTO registries (id, name, profile, config_nonce, config_cipher) VALUES (?, 'shared', 'generic', ?, '')")->execute([$registry, str_repeat('x', 24)]);
     foreach ([$a, $b] as $id) {
         $pdo->prepare('INSERT INTO reseller_registries (reseller_id, registry_id) VALUES (?, ?)')->execute([$id, $registry]);
+    }
+    foreach (['com', 'net', 'org', 'uk', 'co.uk', 'free'] as $zone) {
+        $pdo->prepare('INSERT INTO registry_tlds (registry_id, tld) VALUES (?, ?)')->execute([$registry, $zone]);
+        foreach ([$a, $b] as $id) {
+            $pdo->prepare('INSERT INTO reseller_tlds (reseller_id, registry_id, tld) VALUES (?, ?, ?)')->execute([$id, $registry, $zone]);
+        }
     }
     denied('price_not_configured', fn () => job($a, 'domain.create', ['domainname' => 'absent.com', 'period' => 1]));
     check(countRows('epp_jobs') === 0 && countRows('object_ownership') === 0, 'Missing price must roll back job and reservation');
@@ -240,7 +247,7 @@ try {
     check((int) $pdo->query('SELECT period FROM registry_prices')->fetchColumn() === 0, 'Legacy price preserved without term');
     denied('price_not_configured', fn () => job($a, 'domain.create', ['domainname' => 'migrated.com', 'period' => 1]));
     $pdo->exec(file_get_contents(dirname(__DIR__) . '/database/schema.sql'));
-    check(countRows('schema_migrations') === 2, 'Fresh schema can be reapplied after migration');
+    check(countRows('schema_migrations') === 3, 'Fresh schema can be reapplied after migration');
     echo "PASS: {$checks} assertions\n";
 } finally {
     $pdo = null;

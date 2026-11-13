@@ -1,0 +1,13 @@
+/* Font and layout conventions adapted from Argora Foundry, copyright 2025 Argora (MIT). */
+:root { --tblr-font-sans-serif: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+body { min-height: 100vh; }
+form { margin: 0; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.table td { max-width: 26rem; overflow-wrap: anywhere; white-space: normal; }
+.table th { white-space: normal; }
+.form-label { display: block; }
+.form-label input, .form-label select, .form-label textarea { margin-top: .35rem; font-weight: normal; }
+.action-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1rem; }
+.action-grid .card { height: 100%; }
+.uuid { font-family: var(--tblr-font-monospace); font-size: .85em; }
+.account-name { max-width: 10rem; }

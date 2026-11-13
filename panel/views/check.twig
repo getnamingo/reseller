@@ -1,0 +1,20 @@
+{% extends 'layouts/app.twig' %}
+{% block content %}
+<div class="card card-body">
+  <dl class="row"><dt class="col-sm-3">Check UUID</dt><dd class="col-sm-9 uuid">{{ job.job_uuid }}</dd>
+  <dt class="col-sm-3">Registry</dt><dd class="col-sm-9">{{ job.registry_name }}</dd>
+  <dt class="col-sm-3">Status</dt><dd class="col-sm-9">{{ job.status }}</dd>
+  <dt class="col-sm-3">Price</dt><dd class="col-sm-9">{{ job.price }} {{ job.currency }}</dd></dl>
+  {% if job.status in ['queued', 'processing'] %}<p class="text-secondary">The API is still processing this check. Refreshing this result does not submit another check.</p><a class="btn btn-primary align-self-start" href="/checks/{{ job.job_uuid }}">Refresh result</a>
+  {% else %}
+    <h2 class="card-title">Registry result</h2>
+    {% if job.result.domains is iterable %}
+    <div class="table-responsive"><table class="table"><thead><tr><th>Domain</th><th>Availability</th><th>Reason</th></tr></thead><tbody>
+    {% for domain in job.result.domains %}<tr><td>{{ domain.name }}</td><td>{% if domain.avail is same as(true) or domain.avail is same as(1) or domain.avail is same as('1') or domain.avail is same as('true') %}<span class="badge bg-green-lt">Available</span>{% else %}<span class="badge bg-secondary-lt">Unavailable</span>{% endif %}</td><td>{{ domain.reason }}</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% else %}<p class="text-secondary">{{ job.result.error ?? job.result.msg ?? job.result.message ?? 'No availability details were returned.' }}</p>{% endif %}
+    <details class="mt-3"><summary>Registry response details</summary><pre>{{ result }}</pre></details>
+  {% endif %}
+  <a href="/checks" class="mt-3">Back to availability</a>
+</div>
+{% endblock %}

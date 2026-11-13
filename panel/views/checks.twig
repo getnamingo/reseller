@@ -1,0 +1,28 @@
+{% extends 'layouts/app.twig' %}
+{% import 'partials/table.twig' as tables %}
+{% block content %}
+<div class="row row-cards">
+<div class="col-lg-6"><div class="card card-body">
+  <h2 class="card-title">Check domain availability</h2>
+  <form method="post" action="/checks"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="key" value="{{ key }}">
+    <label class="form-label mb-3">Registry<select class="form-select" name="registry_id" required><option value="">Choose a registry</option>
+    {% set shown = [] %}{% for item in access %}{% if item.registry_enabled and item.access_enabled and item.tld_enabled and item.permitted and item.registry_id not in shown %}
+      <option value="{{ item.registry_id }}">{{ item.registry }}</option>{% set shown = shown|merge([item.registry_id]) %}
+    {% endif %}{% endfor %}</select></label>
+    <label class="form-label mb-3">Domain names<textarea class="form-control" name="domains" rows="6" maxlength="15000" placeholder="example.com&#10;example.net" required></textarea></label>
+    <p class="text-secondary">One domain per line, up to 50. Use ASCII / punycode names without a trailing dot. Each submitted check uses the configured price below.</p>
+    <button class="btn btn-primary">Check availability</button>
+  </form>
+</div></div>
+<div class="col-lg-6"><div class="card"><div class="card-header"><h2 class="card-title">Permitted TLDs</h2></div>
+  <ul class="list-group list-group-flush">{% for item in access %}{% if item.registry_enabled and item.access_enabled and item.tld_enabled and item.permitted %}<li class="list-group-item"><strong>.{{ item.tld }}</strong> <span class="text-secondary">{{ item.registry }}</span></li>{% endif %}{% endfor %}</ul>
+  <div class="card-footer text-secondary">Only explicitly permitted TLDs are accepted.</div>
+</div></div>
+</div>
+<div class="card mt-4"><div class="card-header"><h2 class="card-title">Availability check prices</h2></div>
+{{ tables.show(prices, {'registry':'Registry', 'amount':'Per submitted check', 'currency':'Currency', 'scope':'Source'}) }}
+<div class="card-footer text-secondary">A missing check price blocks submission. Explicit zero prices are free.</div></div>
+<div class="card mt-4"><div class="card-header"><h2 class="card-title">Latest 50 availability checks</h2></div>
+{{ tables.show(jobs, {'check_id':'Check UUID', 'status':'Status', 'price':'Price', 'currency':'Currency', 'created_at':'Date'}) }}
+</div>
+{% endblock %}
