@@ -187,8 +187,12 @@ final class Admin
                         if (!in_array($type, ['domain', 'contact', 'host'], true)) {
                             throw new ApiException(422, 'invalid_type', 'Choose domain, contact or host.');
                         }
-                        $pdo->prepare('INSERT INTO object_ownership (registry_id, object_type, object_name, reseller_id, active) VALUES (?, ?, ?, ?, 1)')
-                            ->execute([$target, $type, Ownership::name($get('object_name'), $type), $id('reseller_id')]);
+                        $state = $get('domain_state', 'active');
+                        if (!in_array($state, ['active', 'deleted'], true) || $type !== 'domain' && $state !== 'active') {
+                            throw new ApiException(422, 'invalid_state', 'Only domains may be imported as deleted.');
+                        }
+                        $pdo->prepare('INSERT INTO object_ownership (registry_id, object_type, object_name, reseller_id, active, domain_state, next_check_at) VALUES (?, ?, ?, ?, 1, ?, IF(? = 1, UTC_TIMESTAMP(6), NULL))')
+                            ->execute([$target, $type, Ownership::name($get('object_name'), $type), $id('reseller_id'), $state, (int) ($state === 'deleted')]);
                         break;
                     default:
                         throw new ApiException(404, 'unknown_action', 'Unknown administration action.');

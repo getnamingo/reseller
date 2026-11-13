@@ -8,7 +8,7 @@
   <div class="col-md-6"><div class="card card-body"><div class="subheader">Held for pending operations</div><div class="h1 mb-0">{{ user.held_balance }} {{ user.currency }}</div></div></div>
 </div>
 {% endif %}
-<div class="card">{{ tables.show(rows, columns) }}</div>
+<div class="card">{{ tables.show(rows, columns, csrf) }}</div>
 {% include 'partials/pagination.twig' %}
 {% if path == '/wallet' %}
 <div class="card mt-4"><div class="card-header"><h2 class="card-title">Latest 50 deposit requests</h2></div>

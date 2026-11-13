@@ -39,6 +39,7 @@ The API exposes these commands:
 | `domain.info` | `domainInfo` |
 | `domain.renew` | `domainRenew` |
 | `domain.restore` | `domainRestore` |
+| `domain.restore_report` | Validated RFC 3915 report adapter |
 | `domain.transfer` | `domainTransfer` |
 | `domain.update_authinfo` | `domainUpdateAuthinfo` |
 | `domain.update_contact` | `domainUpdateContact` |
@@ -243,10 +244,10 @@ For an existing installation:
 4. Configure explicit prices (including free operations) and exact zone/term totals,
    then restart the API and workers.
 
-Successful creates activate ownership; rejected creates release it. Successful deletes
-and outgoing transfer approvals remove it. Pending EPP responses (`1001`), unconfirmed
-incoming transfers and uncertain writes remain `unknown`, preserving ownership
-reservations and wallet holds. Verify the final registry outcome, then use the existing
+Successful creates activate ownership; rejected creates release it. Domain deletions retain ownership in state `deleted` through redemption until a registry
+observation confirms purge. Successful contact/host deletions and outgoing transfer approvals remove ownership. Registry-accepted EPP responses (`1001`) and unconfirmed incoming transfers remain
+`pending`, preserving ownership reservations and wallet holds while read-only observations
+check completion. Transport-uncertain writes remain `unknown` and require operator verification. Verify the final registry outcome, then use the existing
 `job:resolve JOB_UUID charge|release`; `charge` means the operation actually completed,
 `release` means it did not. Reconcile any registry-generated LT contact ID lost with an
 unknown response using `object:assign` after resolving the job. Never retry an uncertain
@@ -361,9 +362,10 @@ sudo -u namingo-api php8.5 bin/manage.php deposit:approve DEPOSIT_UUID
 Ledger behavior for a priced EPP job is:
 
 1. `hold`: move money from available to held before dispatch.
-2. `charge`: remove held money after a successful or accepted EPP response.
+2. `charge`: remove held money after confirmed successful completion.
 3. `release`: return held money after a definite rejection before/at the registry.
-4. `unknown`: retain the hold after an ambiguous transport failure.
+4. `pending`: retain the hold after registry acceptance while completion is checked.
+5. `unknown`: retain the hold after an ambiguous transport failure.
 
 For an ambiguous job, check the registry or poll data first, then resolve exactly once:
 
@@ -373,7 +375,8 @@ sudo -u namingo-api php8.5 bin/manage.php job:resolve JOB_UUID charge
 sudo -u namingo-api php8.5 bin/manage.php job:resolve JOB_UUID release
 ```
 
-If a process or host crash leaves an old job in `processing`, an operator may first run `job:mark-unknown JOB_UUID`; this deliberately keeps its hold for reconciliation. A queued job can be dispatched again by retrying the identical request with the identical Idempotency-Key.
+If a process or host crash leaves an old job in `processing`, an operator may first run `job:mark-unknown JOB_UUID`; this deliberately keeps its hold for reconciliation. Queued jobs are dispatched automatically by API worker 0. Retrying the identical request
+with the identical Idempotency-Key remains safe; do not submit uncertain writes under a new key.
 
 ## Operational notes
 
@@ -419,7 +422,8 @@ prices, registry/TLD permissions and owned objects. Availability checks submit o
 `domain.check` through the API with the current reseller's token; results are read
 through the API too. They use the configured check price (including explicit zero),
 with an idempotency key per form submission. Refreshing a result only polls that job.
-There is no domain registration, domain management or public account-registration route.
+There is no domain registration or public account-registration route. The panel offers
+scoped restoration, restore-report and transfer query/cancellation follow-ups for existing lifecycle work.
 
 Role **0 is administrator**, role **1 is reseller**. Role 0 has explicit server-side
 checks on every administration request and action; roles are reread from MariaDB,
@@ -554,7 +558,7 @@ Use `next_offset` while `has_more` is true. Jobs sort newest first with a UUID
 tie-breaker; domains sort by name and registry UUID. Offset pages reflect current
 data, so newly submitted jobs may shift page boundaries between requests. Amounts
 remain exact decimal strings. `status` accepts `queued`, `processing`, `succeeded`,
-`rejected` or `unknown`; `command` must be an exposed command. Domain `name` is a
+`rejected`, `pending` or `unknown`; `command` must be an exposed command. Domain `name` is a
 case-insensitive literal ASCII fragment (no wildcards); `active` accepts `1` or `0`.
 Price `period` accepts 0–10 (0 means per operation) and `tld` is an exact configured
 price suffix, optionally with a leading dot. Missing prices are never synthesized.
@@ -580,3 +584,151 @@ Run `tests/self_service.php` with the same `TEST_MYSQL_*` settings as the other 
 It creates/removes its own test database and checks cross-reseller/admin isolation,
 stable pagination, filters, effective pricing, pending domains, revoked access and
 payload redaction without sending registry commands.
+
+## Deletion, restoration, transfers and durable dispatch
+
+Apply migration **004** with `php8.5 bin/manage.php migrate` before starting the new API
+or panel. Stop both during the upgrade and back up the database. Migration 004 adds queue
+leases/due dates, parent-job references, retained deletion state and the `pending` job
+status. Historical `unknown` jobs carrying an explicit EPP `1001` are promoted to accepted
+`pending`; transport uncertainty is not promoted or replayed. Ownership already removed
+by the old implementation cannot be reconstructed safely from deletion history alone:
+independently verify and import any still-redeemable legacy domains with
+`object:assign REGISTRY_UUID domain example.com RESELLER_UUID deleted` (or choose Deleted
+in the administrator ownership-import form). Existing mappings are never overwritten.
+
+### Dispatch and recovery
+
+API worker 0 runs a database dispatcher every second. It leases due queued jobs and sends
+them to the existing task workers. Claims at execution are atomic, so duplicate/lost task
+delivery cannot execute the same queued job twice. A busy registry defers a never-attempted
+job for five seconds; the dispatcher retries it without needing the client to POST again.
+Expired delivery leases make lost queued tasks eligible again. A database advisory lock
+coordinates dispatchers across API instances and the in-flight budget prevents an
+unbounded background task backlog.
+
+A processing job older than `API_JOB_STALE_SECONDS` becomes `unknown` only after recovery
+can acquire its registry session lock. Its wallet hold/reservation remain. It is **never
+replayed automatically**. The original worker also rechecks its job state before executing,
+so an interrupted pre-lock worker cannot proceed after recovery. Operators must still stop
+an original worker and verify the registry outcome before manual reconciliation.
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `API_QUEUE_TICK_MS` | 1000 | Dispatcher interval |
+| `API_QUEUE_BATCH` | 8 | Maximum background tasks selected per tick |
+| `API_QUEUE_MAX_INFLIGHT` | 8 | Background/processing task budget; omit to derive it as twice the configured task-worker count |
+| `API_DISPATCH_LEASE_SECONDS` | 60 | Lost-delivery retry lease |
+| `API_JOB_STALE_SECONDS` | 900 | Stale-processing recovery threshold |
+| `API_RECONCILE_SECONDS` | 30 | Accepted-pending observation retry interval |
+| `API_PURGE_CHECK_SECONDS` | 300 | Retained deleted-domain purge-check interval |
+
+A job in `pending` was accepted by the registry; a job in `unknown` has an uncertain write
+outcome. Both retain funds until confirmed settlement. Pending domain creation, deletion,
+restoration and transfer operations are observed using read-only registry queries.
+Transient query errors retain holds; they do not become rejection/refund evidence.
+Pending commands whose effects cannot be proved through the available profile parser need
+operator reconciliation. Background observations do not add reseller job charges.
+
+`GET /v1/jobs` can filter `status=pending`. Single-job details also expose the domain,
+transfer operation, parent-job UUID, next attempt/reconciliation time and last observation
+error, without exposing request authInfo or registry credentials. To request an earlier
+safe check of an owned pending job, or reschedule an owned queued job:
+
+```http
+POST /v1/jobs/JOB_UUID/reconcile
+Authorization: Bearer TOKEN
+```
+
+This returns HTTP 202 with the current job. It schedules work; GET polling stays read-only.
+The endpoint refuses unknown writes and cannot select another reseller's job.
+
+### Delete and restore
+
+A successful deletion retains the domain's owner with `domain_state=deleted`. It remains
+visible in `GET /v1/domains` and the panel's Objects page. Its `active` flag describes
+confirmed ownership, not whether the domain resolves or is outside redemption. Ordinary
+updates/renewals/new creates are blocked on retained deleted names; owner info and restore
+operations remain available. Background info checks remove the retained mapping only after
+registry code 2303 confirms absence. Transient failures never release the name to another
+reseller. Profiles hiding absence or returning insufficient lifecycle information require
+operator verification; no fixed redemption duration is guessed.
+
+Request restoration through the existing command with its configured restore price:
+
+```http
+POST /v1/epp/domain.restore
+Authorization: Bearer TOKEN
+Idempotency-Key: restore-example-0001
+Content-Type: application/json
+
+{"registry_uuid":"REGISTRY_UUID","params":{"domainname":"example.com"}}
+```
+
+Restoration remains pending until an observation confirms completion, so a report-required
+restore is not charged/completed prematurely. The original restore job stays reserved while
+its report is submitted as a linked follow-up. Configure an explicit report price, normally
+zero, for example:
+
+```bash
+php8.5 bin/manage.php price:set REGISTRY_UUID domain.restore_report 0 EUR
+```
+
+The new `domain.restore_report` command supports RFC 3915 reports for **generic/VRSN**
+profiles. It builds XML from validated actual data; it does not call the pinned client's
+report method containing sample registration data/dates. Other profiles are rejected for
+this report adapter until an appropriate profile-specific mapping is implemented.
+
+```json
+{
+  "registry_uuid": "REGISTRY_UUID",
+  "params": {
+    "domainname": "example.com",
+    "pre_data": "Verified registration data before deletion",
+    "post_data": "Verified registration data after restoration",
+    "deleted_at": "2026-11-01T12:00:00Z",
+    "restored_at": "2026-11-13T12:00:00Z",
+    "reason": "Registrant requested restoration",
+    "statements": ["Actual first registrar statement required by the registry", "Actual second registrar statement required by the registry"],
+    "other": "Optional supporting information"
+  }
+}
+```
+
+Send this to `POST /v1/epp/domain.restore_report` with the normal bearer token and a fresh
+Idempotency-Key. Dates must be UTC `YYYY-MM-DDTHH:MM:SSZ`, with deletion no later than
+restoration. Supply accurate free-text data and the two registry-required statements.
+Completion reactivates retained ownership and settles the original restore hold once.
+
+### Pending transfers
+
+An incoming transfer request keeps the original reservation/hold while pending. Its owner
+can submit `domain.transfer` with `op=query` or, while acceptance is known, `op=cancel`.
+These linked follow-ups do not take ownership of the original reservation or release its
+funds merely because a query succeeded. Query/cancel operations use their existing explicit
+period-0 prices; the original request uses its term price.
+
+Automatic transfer observations correlate the domain, gaining/losing client ID and transfer
+request date before settling. Approval activates incoming ownership and charges the original
+hold once; a confirmed cancellation/rejection releases it and removes only the incoming
+reservation. Stale/mismatched/unsupported observations leave the original pending. A queued
+query remains authorized if its original transfer completes before the query executes.
+For profile methods requiring original request parameters, workers merge them server-side;
+the panel never receives stored authInfo.
+
+A transport-unknown incoming request may be queried for diagnosis, but is not silently
+finalized from an ambiguous observation. Cancellation of such an uncertain request remains
+blocked until an operator verifies it. No registry mutation is automatically retried.
+This uses transfer-query reconciliation rather than consuming or acknowledging a shared
+upstream poll queue, avoiding accidental loss of unrelated registry notifications.
+
+The panel links every history row to scoped job details. Pending jobs offer **Check registry
+outcome**, transfers offer query/cancellation, retained deleted objects offer restore, and
+pending restores offer the validated report form. Registration and new transfer-request
+controls remain API-only. Administrators can manually resolve verified pending or unknown
+jobs using the existing reconciliation controls/CLI.
+
+Run `tests/lifecycle.php` with the same `TEST_MYSQL_*` settings as the other suites. It tests
+real database reservations/ledger transitions, queue leases, registry-lock recovery,
+transfer correlation, cancellation, purge retention, report XML and v3-to-v4 migration.
+Registry observations are simulated; no live registry commands are sent.

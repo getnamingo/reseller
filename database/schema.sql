@@ -111,9 +111,13 @@ CREATE TABLE IF NOT EXISTS object_ownership (
     object_name VARCHAR(253) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     reseller_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     active TINYINT(1) NOT NULL DEFAULT 0,
+    domain_state ENUM('active', 'deleted') NOT NULL DEFAULT 'active',
+    next_check_at DATETIME(6) NULL,
+    check_until DATETIME(6) NULL,
     job_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
     PRIMARY KEY (registry_id, object_type, object_name),
     INDEX idx_ownership_job (job_id),
+    INDEX idx_ownership_check (domain_state, next_check_at, check_until),
     CONSTRAINT fk_ownership_registry FOREIGN KEY (registry_id) REFERENCES registries(id),
     CONSTRAINT fk_ownership_reseller FOREIGN KEY (reseller_id) REFERENCES resellers(id)
 ) ENGINE=InnoDB;
@@ -129,14 +133,22 @@ CREATE TABLE IF NOT EXISTS epp_jobs (
     request_cipher MEDIUMBLOB NOT NULL,
     response_nonce BINARY(24) NULL,
     response_cipher MEDIUMBLOB NULL,
-    status ENUM('queued', 'processing', 'succeeded', 'rejected', 'unknown') NOT NULL DEFAULT 'queued',
+    status ENUM('queued', 'processing', 'succeeded', 'rejected', 'unknown', 'pending') NOT NULL DEFAULT 'queued',
     epp_code SMALLINT UNSIGNED NULL,
+    parent_job_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    next_attempt_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    dispatch_until DATETIME(6) NULL,
+    reconcile_at DATETIME(6) NULL,
+    last_error VARCHAR(255) NULL,
     price DECIMAL(19,4) UNSIGNED NOT NULL DEFAULT 0.0000,
     currency CHAR(3) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     started_at DATETIME(6) NULL,
     finished_at DATETIME(6) NULL,
     UNIQUE KEY uq_job_idempotency (reseller_id, idempotency_key),
+    INDEX idx_job_dispatch (status, next_attempt_at, dispatch_until),
+    INDEX idx_job_reconcile (status, reconcile_at, dispatch_until),
+    INDEX idx_job_parent (parent_job_id),
     INDEX idx_job_registry_status (registry_id, status),
     INDEX idx_job_reseller_created (reseller_id, created_at),
     CONSTRAINT fk_job_reseller FOREIGN KEY (reseller_id) REFERENCES resellers(id),
@@ -198,3 +210,5 @@ INSERT IGNORE INTO schema_migrations (version) VALUES ('001_initial');
 INSERT IGNORE INTO schema_migrations (version) VALUES ('002_ownership_pricing');
 
 INSERT IGNORE INTO schema_migrations (version) VALUES ('003_foundry_panel');
+
+INSERT IGNORE INTO schema_migrations (version) VALUES ('004_lifecycle_queue');

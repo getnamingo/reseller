@@ -87,6 +87,31 @@ final class PanelController
                 }
                 return $this->admin($response, $section, $this->page($request));
             }
+            if ($method === 'POST' && preg_match('#^/jobs/([a-f0-9-]{36})/reconcile$#D', $path, $match)) {
+                $this->api->schedule($_SESSION['api_token'], $match[1]);
+                return $this->redirect($response, '/jobs/' . $match[1]);
+            }
+            if ($path === '/lifecycle' && $method === 'POST') {
+                $command = $input['command'] ?? '';
+                if (!in_array($command, ['domain.restore', 'domain.restore_report', 'domain.transfer'], true)
+                    || !is_string($input['registry_id'] ?? null) || !Util::isUuid($input['registry_id'])
+                    || !is_string($input['key'] ?? null) || !Util::isUuid($input['key'])) {
+                    throw new ApiException(422, 'invalid_lifecycle_action', 'Invalid lifecycle action.');
+                }
+                $params = ['domainname' => Ownership::name($input['domainname'] ?? null, 'domain')];
+                if ($command === 'domain.transfer') {
+                    if (!in_array($input['op'] ?? '', ['query', 'cancel'], true)) {
+                        throw new ApiException(422, 'invalid_lifecycle_action', 'Only transfer query or cancellation is offered here.');
+                    }
+                    $params['op'] = $input['op'];
+                } elseif ($command === 'domain.restore_report') {
+                    foreach (['pre_data', 'post_data', 'deleted_at', 'restored_at', 'reason', 'other'] as $field) { $params[$field] = $input[$field] ?? ''; }
+                    $params['statements'] = [$input['statement1'] ?? '', $input['statement2'] ?? ''];
+                    Rgp::validate($params);
+                }
+                $job = $this->api->lifecycle($_SESSION['api_token'], $input['registry_id'], $command, $params, $input['key']);
+                return $this->redirect($response, '/jobs/' . $job['job_uuid']);
+            }
             if ($path === '/checks' && $method === 'POST') {
                 $registry = $input['registry_id'] ?? null;
                 $key = $input['key'] ?? null;
@@ -104,6 +129,11 @@ final class PanelController
             }
             if ($method !== 'GET') {
                 throw new ApiException(405, 'method_not_allowed', 'This page is read-only.');
+            }
+            if (preg_match('#^/jobs/([a-f0-9-]{36})$#D', $path, $matches)) {
+                $job = $this->api->detail($_SESSION['api_token'], $matches[1]);
+                return $this->render($response, 'job.twig', ['title' => 'Job details', 'job' => $job, 'key' => Util::uuid(),
+                    'result' => json_encode($job['result'] ?? null, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
             }
             if (preg_match('#^/checks/([a-f0-9-]{36})$#D', $path, $matches)) {
                 $job = $this->api->job($_SESSION['api_token'], $matches[1]);
@@ -150,7 +180,7 @@ final class PanelController
                 return $this->render($response, 'jobs.twig', $data + ['title' => 'Job history', 'rows' => $listing['data'],
                     'paginate' => true, 'next' => $listing['pagination']['has_more'], 'filters' => $filters,
                     'query' => http_build_query($filters), 'commands' => array_column(CommandCatalog::all(), 'command'),
-                    'statuses' => ['queued', 'processing', 'succeeded', 'rejected', 'unknown']]);
+                    'statuses' => ['queued', 'processing', 'succeeded', 'rejected', 'unknown', 'pending']]);
             case '/account':
                 $data += ['title' => 'Account', 'rows' => PanelData::rows($this->pdo, 'SELECT id, username, role, status, currency, created_at FROM resellers WHERE id = ?', [$id]),
                     'columns' => ['id' => 'Reseller UUID', 'username' => 'Username', 'role' => 'Role (0 = admin)', 'status' => 'Status', 'currency' => 'Currency', 'created_at' => 'Created']];
@@ -173,8 +203,10 @@ final class PanelController
                 break;
             case '/domains':
                 $data += ['title' => 'Your domains, contacts and hosts', 'rows' => PanelData::rows($this->pdo,
-                    "SELECT o.object_type, o.object_name, r.name AS registry, o.active, o.job_id FROM object_ownership o JOIN registries r ON r.id = o.registry_id WHERE o.reseller_id = ? ORDER BY o.object_type, o.object_name LIMIT 51 OFFSET {$offset}", [$id]),
-                    'columns' => ['object_type' => 'Type', 'object_name' => 'Object', 'registry' => 'Registry', 'active' => 'Active', 'job_id' => 'Pending job'], 'paginate' => true];
+                    "SELECT o.registry_id, o.object_type, o.object_name, r.name AS registry, o.active, o.domain_state, o.job_id FROM object_ownership o JOIN registries r ON r.id = o.registry_id WHERE o.reseller_id = ? ORDER BY o.object_type, o.object_name LIMIT 51 OFFSET {$offset}", [$id]),
+                    'columns' => ['object_type' => 'Type', 'object_name' => 'Object', 'registry' => 'Registry', 'active' => 'Active', 'domain_state' => 'Domain state', 'job_id' => 'Pending job', 'restore_key' => 'Restore'], 'paginate' => true];
+                foreach ($data['rows'] as &$object) { $object['restore_key'] = Util::uuid(); }
+                unset($object);
                 break;
             case '/checks':
                 return $this->render($response, 'checks.twig', $data + ['title' => 'Domain availability', 'key' => Util::uuid(),
@@ -201,8 +233,8 @@ final class PanelController
                 ['id' => 'UUID', 'username' => 'Reseller', 'amount' => 'Amount', 'currency' => 'Currency', 'status' => 'Status', 'client_reference' => 'Reference', 'created_at' => 'Date']],
             'jobs' => ['SELECT j.id, r.username, j.command, j.status, j.price, j.currency, j.created_at FROM epp_jobs j JOIN resellers r ON r.id = j.reseller_id ORDER BY j.created_at DESC',
                 ['id' => 'UUID', 'username' => 'Reseller', 'command' => 'Command', 'status' => 'Status', 'price' => 'Price', 'currency' => 'Currency', 'created_at' => 'Date']],
-            'ownership' => ['SELECT registry_id, reseller_id, object_type, object_name, active, job_id FROM object_ownership ORDER BY registry_id, object_type, object_name',
-                ['registry_id' => 'Registry UUID', 'reseller_id' => 'Reseller UUID', 'object_type' => 'Type', 'object_name' => 'Object', 'active' => 'Active', 'job_id' => 'Pending job']],
+            'ownership' => ['SELECT registry_id, reseller_id, object_type, object_name, active, domain_state, job_id FROM object_ownership ORDER BY registry_id, object_type, object_name',
+                ['registry_id' => 'Registry UUID', 'reseller_id' => 'Reseller UUID', 'object_type' => 'Type', 'object_name' => 'Object', 'active' => 'Ownership confirmed', 'domain_state' => 'Domain state', 'job_id' => 'Pending job']],
         };
         $data = ['title' => 'Manage ' . $section, 'section' => $section, 'page' => $page, 'path' => '/admin/' . $section,
             'rows' => PanelData::rows($this->pdo, $sql . " LIMIT 51 OFFSET {$offset}"), 'columns' => $columns, 'paginate' => true,

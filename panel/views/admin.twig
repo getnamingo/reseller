@@ -55,8 +55,8 @@
   {{ forms.confirmed('I independently verified receipt of funds before approval, or verified the reason for rejection.') }}<button class="btn btn-primary">Save decision</button>
 </form></div>
 {% elseif section == 'jobs' %}
-<div class="card card-body"><h2 class="card-title">Resolve an unknown job</h2><form method="post">{{ forms.hidden('job.resolve', csrf) }}
-  {{ forms.input('id', 'Unknown job UUID') }}{{ forms.select('resolution', 'Verified outcome', {'release':'Did not complete — release hold', 'charge':'Completed — charge hold and apply ownership'}) }}
+<div class="card card-body"><h2 class="card-title">Resolve a pending or unknown job</h2><form method="post">{{ forms.hidden('job.resolve', csrf) }}
+  {{ forms.input('id', 'Pending or unknown job UUID') }}{{ forms.select('resolution', 'Verified outcome', {'release':'Did not complete — release hold', 'charge':'Completed — charge hold and apply ownership'}) }}
   {{ forms.confirmed('I verified the final registry outcome and the original worker is no longer running.') }}<button class="btn btn-primary">Resolve job</button>
 </form></div>
 <div class="card card-body"><h2 class="card-title">Mark a stranded job unknown</h2><form method="post">{{ forms.hidden('job.mark_unknown', csrf) }}
@@ -66,6 +66,7 @@
 <div class="card card-body"><h2 class="card-title">Import verified existing ownership</h2><form method="post">{{ forms.hidden('object.assign', csrf) }}
   {{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}
   {{ forms.select('object_type', 'Type', {'domain':'Domain', 'contact':'Contact', 'host':'Host / NSSET'}) }}{{ forms.input('object_name', 'ASCII name or identifier') }}
+  {{ forms.select('domain_state', 'Verified domain state (use Active for contacts/hosts)', {'active':'Active', 'deleted':'Deleted but still in redemption'}) }}
   <p class="text-secondary">Only import independently verified existing objects. This never changes registry ownership or replaces an existing mapping.</p><button class="btn btn-primary">Import ownership</button>
 </form></div>
 {% endif %}

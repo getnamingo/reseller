@@ -12,6 +12,8 @@ use Namingo\ResellerApi\Crypto;
 use Namingo\ResellerApi\Db;
 use Namingo\ResellerApi\EppWorker;
 use Namingo\ResellerApi\Ledger;
+use Namingo\ResellerApi\Lifecycle;
+use Namingo\ResellerApi\Queue;
 use Namingo\ResellerApi\SelfService;
 use Namingo\ResellerApi\Util;
 use Swoole\Http\Request;
@@ -138,6 +140,10 @@ $readBody = static function (Request $request): array {
 $server->on('WorkerStart', static function (Server $server, int $workerId) use ($rateTable): void {
     Db::reset();
     if ($workerId === 0) {
+        \Swoole\Timer::tick(max(250, Config::int('API_QUEUE_TICK_MS', 1000)), static function () use ($server): void {
+            try { Queue::tick(Db::pdo(), static fn (array $task) => $server->task($task)); }
+            catch (Throwable $e) { Db::reset(); error_log(Util::json(['event' => 'queue_dispatch_failed', 'type' => get_class($e)])); }
+        });
         \Swoole\Timer::tick(120_000, static function () use ($rateTable): void {
             $expiredBefore = intdiv(time(), 60) - 2;
             foreach ($rateTable as $key => $row) {
@@ -151,7 +157,13 @@ $server->on('WorkerStart', static function (Server $server, int $workerId) use (
 
 $server->on('Task', static function (Server $server, int $taskId, int $sourceWorkerId, mixed $data): array {
     Db::reset();
-    return EppWorker::process((string) $data);
+    if (!is_array($data)) { return EppWorker::process((string) $data); }
+    return match ($data['kind'] ?? '') {
+        'job' => EppWorker::process($data['id']),
+        'reconcile' => EppWorker::reconcile($data['id']),
+        'deleted' => EppWorker::checkDeleted($data['registry_id'], $data['object_name'], $data['reseller_id']),
+        default => ['ok' => false, 'error' => 'invalid_task'],
+    };
 });
 
 $server->on('Finish', static function (): void {
@@ -338,6 +350,11 @@ $server->on('Request', static function (Request $request, Response $response) us
             return;
         }
 
+        if ($method === 'POST' && preg_match('#^/v1/jobs/([0-9a-f-]{36})/reconcile$#iD', $path, $matches) === 1) {
+            $respond($response, 202, ['data' => Lifecycle::schedule($pdo, strtolower($matches[1]), $user['id'])], $requestId);
+            return;
+        }
+
         if ($method === 'GET' && preg_match('#^/v1/jobs/([0-9a-f-]{36})$#iD', $path, $matches) === 1) {
             if (!Util::isUuid($matches[1])) {
                 throw new ApiException(404, 'job_not_found', 'Job was not found.');
@@ -364,7 +381,7 @@ $server->on('Request', static function (Request $request, Response $response) us
             }
             CommandCatalog::validateParams($command, $params);
             $idempotencyKey = (string) ($request->header['idempotency-key'] ?? '');
-            if ($idempotencyKey === '' && CommandCatalog::isMutating($command)) {
+            if ($idempotencyKey === '' && CommandCatalog::isMutating($command, $params)) {
                 throw new ApiException(428, 'idempotency_required', 'Mutating EPP commands require an Idempotency-Key header.');
             }
             if ($idempotencyKey === '') {

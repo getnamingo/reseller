@@ -191,6 +191,38 @@ try {
     $mock->append(new Response(200, [], Util::json(['data' => array_replace($checkJob, ['command' => 'domain.create'])])));
     verify(request('/checks/' . Util::uuid())->getStatusCode() === 403, 'Panel does not expose provisioning job results');
     verify(request('/domains', 'POST', [])->getStatusCode() === 405, 'No domain registration or mutation route');
+    $lifecycleId = Util::uuid();
+    $lifecycleJob = array_replace($checkJob, ['job_uuid' => $lifecycleId, 'registry_uuid' => $registry, 'domainname' => 'own.com',
+        'command' => 'domain.restore', 'profile' => 'generic', 'transfer_op' => null, 'status' => 'pending', 'parent_job_uuid' => null, 'last_error' => null, 'result' => ['code' => 1001]]);
+    $mock->append(new Response(200, [], Util::json(['data' => $lifecycleJob])));
+    $detail = body(request('/jobs/' . $lifecycleId));
+    verify(str_contains($detail, 'Submit a restore report') && str_contains($detail, 'Check registry outcome'), 'Pending restore page exposes report and reconciliation');
+    verify(request('/jobs/' . $lifecycleId . '/reconcile', 'POST', [], false)->getStatusCode() === 403, 'Lifecycle reconciliation requires CSRF');
+    $mock->append(new Response(202, [], Util::json(['data' => $lifecycleJob])));
+    verify(request('/jobs/' . $lifecycleId . '/reconcile', 'POST')->getHeaderLine('Location') === '/jobs/' . $lifecycleId, 'Panel schedules pending reconciliation through API');
+    verify(end($history)['request']->getUri()->getPath() === '/v1/jobs/' . $lifecycleId . '/reconcile', 'Reconciliation uses scoped API endpoint');
+    $pdo->prepare("UPDATE object_ownership SET domain_state = 'deleted' WHERE registry_id = ? AND object_name = 'own.com'")->execute([$registry]);
+    verify(str_contains(body(request('/domains')), 'Restore at configured price'), 'Deleted owned domain can be restored from Objects');
+    $restoreInput = ['command' => 'domain.restore', 'registry_id' => $registry, 'domainname' => 'own.com', 'key' => Util::uuid()];
+    $mock->append(new Response(202, [], Util::json(['data' => $lifecycleJob])));
+    verify(request('/lifecycle', 'POST', $restoreInput)->getHeaderLine('Location') === '/jobs/' . $lifecycleId, 'Panel restore submits through API');
+    verify(end($history)['request']->getUri()->getPath() === '/v1/epp/domain.restore', 'Panel restore uses correct command');
+    $reportInput = array_replace($restoreInput, ['command' => 'domain.restore_report', 'key' => Util::uuid(), 'pre_data' => 'Before', 'post_data' => 'After',
+        'deleted_at' => '2026-01-01T12:00:00Z', 'restored_at' => '2026-01-02T12:00:00Z', 'reason' => 'Registrant request', 'statement1' => 'Accurate first statement', 'statement2' => 'Accurate second statement']);
+    $mock->append(new Response(202, [], Util::json(['data' => $lifecycleJob])));
+    verify(request('/lifecycle', 'POST', $reportInput)->getStatusCode() === 303, 'Panel validates and submits actual restore report');
+    verify(json_decode((string) end($history)['request']->getBody(), true)['params']['statements'] === [$reportInput['statement1'], $reportInput['statement2']], 'Report statements are preserved');
+    verify(request('/lifecycle', 'POST', array_replace($restoreInput, ['command' => 'domain.create']))->getStatusCode() === 422, 'Lifecycle controls do not expose registration');
+    $transferJob = array_replace($lifecycleJob, ['command' => 'domain.transfer', 'transfer_op' => 'request']);
+    $mock->append(new Response(200, [], Util::json(['data' => $transferJob])));
+    verify(str_contains(body(request('/jobs/' . $lifecycleId)), 'Cancel pending incoming transfer'), 'Pending transfer page offers query and cancellation');
+    $mock->append(new Response(200, [], Util::json(['data' => array_replace($transferJob, ['status' => 'succeeded'])])));
+    verify(request('/lifecycle', 'POST', array_replace($restoreInput, ['command' => 'domain.transfer', 'op' => 'query']))->getStatusCode() === 303, 'Panel submits transfer query through API');
+    verify(request('/lifecycle', 'POST', array_replace($restoreInput, ['command' => 'domain.transfer', 'op' => 'request']))->getStatusCode() === 422, 'Panel does not start new transfers');
+    $mock->append(new Response(403, [], Util::json(['error' => ['message' => 'Job unavailable.']])));
+    verify(request('/jobs/' . Util::uuid())->getStatusCode() === 403, 'Job details preserve API owner isolation');
+    $pdo->prepare("UPDATE object_ownership SET domain_state = 'active' WHERE registry_id = ? AND object_name = 'own.com'")->execute([$registry]);
+
 
     login('administrator', $password);
     foreach (['resellers', 'registries', 'tlds', 'prices', 'deposits', 'jobs', 'ownership'] as $section) {
@@ -237,7 +269,7 @@ try {
     verify((int) $pdo->query('SELECT COUNT(*) FROM resellers WHERE role = 0')->fetchColumn() === 0, 'Migration defaults every existing account to reseller');
     verify((int) $pdo->query('SELECT COUNT(*) FROM registry_tlds')->fetchColumn() === 2, 'Migration backfills explicitly priced zones');
     verify((int) $pdo->query('SELECT COUNT(*) FROM reseller_tlds')->fetchColumn() === 6, 'Migration grants known zones to existing registry members');
-    verify((int) $pdo->query('SELECT COUNT(*) FROM schema_migrations')->fetchColumn() === 3, 'Migration version recorded');
+    verify((int) $pdo->query('SELECT COUNT(*) FROM schema_migrations')->fetchColumn() === 4, 'Migration version recorded');
     $_ENV['APP_ENV'] = 'production'; $_ENV['PANEL_ORIGIN'] = 'https://panel.example.test';
     $_SERVER['HTTPS'] = '';
     try {

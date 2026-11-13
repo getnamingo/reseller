@@ -8,8 +8,7 @@ use Namingo\ResellerApi\Ledger;
 use Namingo\ResellerApi\Ownership;
 use Namingo\ResellerApi\Util;
 
-require dirname(__DIR__) . '/src/Core.php';
-require dirname(__DIR__) . '/src/Access.php';
+require dirname(__DIR__) . '/vendor/autoload.php';
 
 // Creates and drops only a uniquely named test database. No registry/network commands are sent.
 $dsn = getenv('TEST_MYSQL_DSN') ?: 'mysql:host=127.0.0.1;port=3306';
@@ -165,6 +164,8 @@ try {
     $j = job($a, 'domain.delete', ['domainname' => 'pending.com']); finish($j, 'rejected');
     $j = job($a, 'domain.info', ['domainname' => 'pending.com']); finish($j);
     $j = job($a, 'domain.delete', ['domainname' => 'pending.com']); finish($j);
+    denied('object_not_owned', fn () => job($b, 'domain.create', $params));
+    $j = job($a, 'domain.info', ['domainname' => 'pending.com']); finish($j, 'rejected', ['code' => 2303]);
     $j = job($b, 'domain.create', $params); finish($j);
     denied('object_not_owned', fn () => job($a, 'domain.info', ['domainname' => 'pending.com']));
 
@@ -247,7 +248,7 @@ try {
     check((int) $pdo->query('SELECT period FROM registry_prices')->fetchColumn() === 0, 'Legacy price preserved without term');
     denied('price_not_configured', fn () => job($a, 'domain.create', ['domainname' => 'migrated.com', 'period' => 1]));
     $pdo->exec(file_get_contents(dirname(__DIR__) . '/database/schema.sql'));
-    check(countRows('schema_migrations') === 3, 'Fresh schema can be reapplied after migration');
+    check(countRows('schema_migrations') === 4, 'Fresh schema can be reapplied after migration');
     echo "PASS: {$checks} assertions\n";
 } finally {
     $pdo = null;

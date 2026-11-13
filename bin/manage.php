@@ -48,7 +48,7 @@ Namingo Reseller EPP API management
   php bin/manage.php auth:prune
   php bin/manage.php price:set REGISTRY_UUID COMMAND AMOUNT CURRENCY [RESELLER_UUID|global] [TLD|-] [YEARS|0]
   php bin/manage.php price:delete REGISTRY_UUID COMMAND [RESELLER_UUID|global] [TLD|-] [YEARS|0]
-  php bin/manage.php object:assign REGISTRY_UUID domain|contact|host NAME RESELLER_UUID
+  php bin/manage.php object:assign REGISTRY_UUID domain|contact|host NAME RESELLER_UUID [active|deleted]
   php bin/manage.php deposit:approve DEPOSIT_UUID
   php bin/manage.php deposit:reject DEPOSIT_UUID
   php bin/manage.php job:mark-unknown JOB_UUID
@@ -148,6 +148,9 @@ try {
             }
             if ($exists !== false && !$pdo->query("SELECT 1 FROM schema_migrations WHERE version = '003_foundry_panel'")->fetchColumn()) {
                 $pdo->exec(file_get_contents($root . '/database/003_foundry_panel.sql'));
+            }
+            if ($exists !== false && !$pdo->query("SELECT 1 FROM schema_migrations WHERE version = '004_lifecycle_queue'")->fetchColumn()) {
+                $pdo->exec(file_get_contents($root . '/database/004_lifecycle_queue.sql'));
             }
             $sql = file_get_contents($root . '/database/schema.sql');
             if ($sql === false) {
@@ -386,8 +389,12 @@ try {
             $name = Ownership::name($arg(4, 'NAME'), $type);
             $resellerId = $uuid($arg(5, 'RESELLER_UUID'), 'RESELLER_UUID');
             // Import only verified existing objects; never overwrite another owner's mapping or reservation.
-            $stmt = $pdo->prepare('INSERT INTO object_ownership (registry_id, object_type, object_name, reseller_id, active) VALUES (?, ?, ?, ?, 1)');
-            $stmt->execute([$registryId, $type, $name, $resellerId]);
+            $state = $argv[6] ?? 'active';
+            if (!in_array($state, ['active', 'deleted'], true) || $type !== 'domain' && $state !== 'active') {
+                throw new RuntimeException('Only domains may be imported as deleted.');
+            }
+            $stmt = $pdo->prepare('INSERT INTO object_ownership (registry_id, object_type, object_name, reseller_id, active, domain_state, next_check_at) VALUES (?, ?, ?, ?, 1, ?, IF(? = 1, UTC_TIMESTAMP(6), NULL))');
+            $stmt->execute([$registryId, $type, $name, $resellerId, $state, (int) ($state === 'deleted')]);
             Audit::record($pdo, $resellerId, 'admin.object_assigned', 'registry', $registryId, null, ['type' => $type, 'name' => $name]);
             echo "Ownership imported.\n";
             break;
