@@ -6,6 +6,7 @@
 <datalist id="registries">{% for item in registries %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</datalist>
 <div class="action-grid mb-4">
 {% if section == 'resellers' %}
+<p class="text-secondary">Select a reseller's UUID in the table to edit its username and contact/company details.</p>
 <div class="card card-body"><h2 class="card-title">Add a reseller</h2><form method="post">{{ forms.hidden('user.create', csrf) }}
   {{ forms.input('username', 'Username') }}{{ forms.input('currency', 'Currency', 'text', 'EUR') }}
   {{ forms.input('password', 'Password', 'password') }}{{ forms.input('password_confirm', 'Confirm password', 'password') }}
@@ -33,9 +34,10 @@
   {{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}{{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{{ forms.enabled() }}<button class="btn btn-outline-primary">Save access</button>
 </form></div>
 {% elseif section == 'tlds' %}
-<div class="card card-body"><h2 class="card-title">Add or enable a TLD</h2><form method="post">{{ forms.hidden('tld.save', csrf) }}
+<div class="card card-body"><h2 class="card-title">Add or edit a TLD</h2><form method="post">{{ forms.hidden('tld.save', csrf) }}
   {{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{{ forms.input('tld', 'TLD / suffix (com or co.uk)') }}{{ forms.enabled() }}<button class="btn btn-primary">Save TLD</button>
 </form></div>
+<p class="text-secondary">The table offers enable/disable and removal controls for each TLD. Removing an unused TLD deletes its assignments and exact TLD prices. Owned domains or any unsettled registry jobs block removal; disable an in-use TLD instead. To correct an unused suffix, remove it and add the correct one.</p>
 <div class="card card-body"><h2 class="card-title">Permit a TLD for a reseller</h2><form method="post">{{ forms.hidden('tld.access', csrf) }}
   {{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}{{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{{ forms.input('tld', 'TLD / suffix') }}{{ forms.enabled() }}
   <p class="text-secondary">Grant registry access first. Both the registry and TLD permissions must be enabled. The API enforces these permissions too.</p><button class="btn btn-primary">Save permission</button>
@@ -71,7 +73,7 @@
 </form></div>
 {% endif %}
 </div>
-<div class="card">{{ tables.show(rows, columns) }}</div>
+<div class="card">{{ tables.show(rows, columns, csrf) }}</div>
 {% include 'partials/pagination.twig' %}
-{% if grants is defined %}<div class="card mt-4"><div class="card-header"><h2 class="card-title">Permission records (up to 100)</h2></div>{{ tables.show(grants, grant_columns) }}</div>{% endif %}
+{% if grants is defined %}<div class="card mt-4"><div class="card-header"><h2 class="card-title">Permission records (up to 100)</h2></div>{{ tables.show(grants, grant_columns, csrf) }}</div>{% endif %}
 {% endblock %}

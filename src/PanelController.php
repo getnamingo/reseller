@@ -15,9 +15,9 @@ final class PanelController
 {
     private ?array $user = null;
     private const SECTIONS = [
-        'resellers' => ['user.create', 'user.password', 'user.status', 'user.role', 'tokens.revoke'],
+        'resellers' => ['user.create', 'user.update', 'user.password', 'user.status', 'user.role', 'tokens.revoke'],
         'registries' => ['registry.save', 'registry.status', 'registry.access'],
-        'tlds' => ['tld.save', 'tld.access'],
+        'tlds' => ['tld.save', 'tld.access', 'tld.delete', 'tld.unassign'],
         'prices' => ['price.set', 'price.delete'],
         'deposits' => ['deposit.approve', 'deposit.reject'],
         'jobs' => ['job.resolve', 'job.mark_unknown'],
@@ -71,6 +71,16 @@ final class PanelController
             if (str_starts_with($path, '/admin/')) {
                 if ((int) $this->user['role'] !== 0) {
                     throw new ApiException(403, 'admin_required', 'Administrator access is required.');
+                }
+                if (preg_match('#^/admin/resellers/([a-f0-9-]{36})$#D', $path, $match)) {
+                    if ($method === 'POST') {
+                        Admin::perform($this->pdo, $this->user['id'], 'user.update', array_replace($input, ['reseller_id' => $match[1]]), $ip);
+                        $_SESSION['flash'] = 'Account saved. Username changes revoke existing API tokens and panel sessions.';
+                        return $this->redirect($response, $path);
+                    }
+                    $accounts = PanelData::rows($this->pdo, 'SELECT id, username, display_name, company, email, phone, address, country_code, currency, status, role FROM resellers WHERE id = ?', [$match[1]]);
+                    if ($accounts === []) { throw new ApiException(404, 'user_not_found', 'Reseller was not found.'); }
+                    return $this->render($response, 'account_edit.twig', ['title' => 'Edit reseller account', 'account' => $accounts[0]]);
                 }
                 if ($method === 'GET' && preg_match('#^/admin/jobs/([a-f0-9-]{36})$#D', $path, $match)) {
                     $job = Ledger::fetchJob($this->pdo, $match[1]);
@@ -201,8 +211,8 @@ final class PanelController
                     'query' => http_build_query($filters), 'commands' => array_column(CommandCatalog::all(), 'command'),
                     'statuses' => ['queued', 'processing', 'succeeded', 'rejected', 'unknown', 'pending']]);
             case '/account':
-                $data += ['title' => 'Account', 'rows' => PanelData::rows($this->pdo, 'SELECT id, username, role, status, currency, created_at FROM resellers WHERE id = ?', [$id]),
-                    'columns' => ['id' => 'Reseller UUID', 'username' => 'Username', 'role' => 'Role (0 = admin)', 'status' => 'Status', 'currency' => 'Currency', 'created_at' => 'Created']];
+                $data += ['title' => 'Account', 'rows' => PanelData::rows($this->pdo, 'SELECT id, username, display_name, company, email, phone, address, country_code, role, status, currency, created_at FROM resellers WHERE id = ?', [$id]),
+                    'columns' => ['id' => 'Reseller UUID', 'username' => 'Username', 'display_name' => 'Name', 'company' => 'Company', 'email' => 'Email', 'phone' => 'Phone', 'address' => 'Address', 'country_code' => 'Country', 'role' => 'Role (0 = admin)', 'status' => 'Status', 'currency' => 'Currency', 'created_at' => 'Created']];
                 break;
             case '/access':
                 $data += ['title' => 'Registry and TLD access', 'rows' => PanelData::access($this->pdo, $id),
@@ -241,11 +251,11 @@ final class PanelController
     {
         $offset = ($page - 1) * 50;
         [$sql, $columns] = match ($section) {
-            'resellers' => ['SELECT r.id, r.username, r.role, r.status, r.currency, w.available_balance, w.held_balance FROM resellers r JOIN wallets w ON w.reseller_id = r.id ORDER BY r.username',
-                ['id' => 'UUID', 'username' => 'Username', 'role' => 'Role', 'status' => 'Status', 'currency' => 'Currency', 'available_balance' => 'Available', 'held_balance' => 'Held']],
+            'resellers' => ['SELECT r.id AS account_id, r.username, r.display_name, r.company, r.email, r.role, r.status, r.currency, w.available_balance, w.held_balance FROM resellers r JOIN wallets w ON w.reseller_id = r.id ORDER BY r.username',
+                ['account_id' => 'UUID / edit', 'username' => 'Username', 'display_name' => 'Name', 'company' => 'Company', 'email' => 'Email', 'role' => 'Role', 'status' => 'Status', 'currency' => 'Currency', 'available_balance' => 'Available', 'held_balance' => 'Held']],
             'registries' => ['SELECT id, name, profile, enabled FROM registries ORDER BY name', ['id' => 'UUID', 'name' => 'Registry', 'profile' => 'Profile', 'enabled' => 'Enabled']],
             'tlds' => ['SELECT t.registry_id, r.name AS registry, t.tld, t.enabled FROM registry_tlds t JOIN registries r ON r.id = t.registry_id ORDER BY r.name, t.tld',
-                ['registry_id' => 'Registry UUID', 'registry' => 'Registry', 'tld' => 'TLD', 'enabled' => 'Enabled']],
+                ['registry_id' => 'Registry UUID', 'registry' => 'Registry', 'tld' => 'TLD', 'enabled' => 'Enabled', 'tld_actions' => 'Edit / remove']],
             'prices' => ["SELECT registry_id, CASE WHEN reseller_id = '" . CommandCatalog::GLOBAL_PRICE_UUID . "' THEN 'global' ELSE reseller_id END AS scope, command, tld, period, amount, currency FROM registry_prices ORDER BY registry_id, tld, command, period",
                 ['registry_id' => 'Registry UUID', 'scope' => 'Scope', 'command' => 'Command', 'tld' => 'TLD', 'period' => 'Term', 'amount' => 'Total', 'currency' => 'Currency']],
             'deposits' => ['SELECT d.id, r.username, d.amount, d.currency, d.status, d.client_reference, d.created_at FROM deposit_requests d JOIN resellers r ON r.id = d.reseller_id ORDER BY d.created_at DESC',
@@ -266,10 +276,10 @@ final class PanelController
                 ORDER BY rr.created_at DESC LIMIT 100');
             $data['grant_columns'] = ['username' => 'Reseller', 'registry' => 'Registry', 'enabled' => 'Permitted'];
         } elseif ($section === 'tlds') {
-            $data['grants'] = PanelData::rows($this->pdo, 'SELECT u.username, r.name AS registry, rt.tld, rt.enabled
+            $data['grants'] = PanelData::rows($this->pdo, 'SELECT u.username, rt.reseller_id, rt.registry_id, r.name AS registry, rt.tld, rt.enabled
                 FROM reseller_tlds rt JOIN resellers u ON u.id = rt.reseller_id JOIN registries r ON r.id = rt.registry_id
                 ORDER BY u.username, r.name, rt.tld LIMIT 100');
-            $data['grant_columns'] = ['username' => 'Reseller', 'registry' => 'Registry', 'tld' => 'TLD', 'enabled' => 'Permitted'];
+            $data['grant_columns'] = ['username' => 'Reseller', 'registry' => 'Registry', 'tld' => 'TLD', 'enabled' => 'Permitted', 'grant_actions' => 'Remove assignment'];
         }
         return $this->render($response, 'admin.twig', $this->pagination($data));
     }

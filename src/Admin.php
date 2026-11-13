@@ -43,7 +43,16 @@ final class Admin
         $target = null;
         $metadata = [];
         // Ledger methods own their transactions and preserve the CLI's reconciliation rules.
-        if (in_array($action, ['deposit.approve', 'deposit.reject', 'job.resolve', 'job.mark_unknown'], true)) {
+        if ($action === 'user.update') {
+            $target = $id('reseller_id');
+            $changes = array_intersect_key($input, array_flip(['username', 'display_name', 'company', 'email', 'phone', 'address', 'country_code']));
+            self::updateAccount($pdo, $target, $changes);
+        } elseif ($action === 'tld.delete') {
+            $target = $id('registry_id');
+            $metadata['tld'] = Access::tld($get('tld'));
+            if ($get('confirmed') !== '1') { throw new ApiException(422, 'confirmation_required', 'Confirm removal of this TLD, its grants and its exact TLD prices.'); }
+            self::deleteTld($pdo, $target, $metadata['tld']);
+        } elseif (in_array($action, ['deposit.approve', 'deposit.reject', 'job.resolve', 'job.mark_unknown'], true)) {
             if ($get('confirmed') !== '1') {
                 throw new ApiException(422, 'confirmation_required', 'Confirm that the funds or registry outcome were independently verified.');
             }
@@ -143,6 +152,12 @@ final class Admin
                         $pdo->prepare('INSERT INTO reseller_tlds (reseller_id, registry_id, tld, enabled) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)')
                             ->execute([$id('reseller_id'), $target, $metadata['tld'], $flag()]);
                         break;
+                    case 'tld.unassign':
+                        $target = $id('registry_id');
+                        $metadata['tld'] = Access::tld($get('tld'));
+                        $pdo->prepare('DELETE FROM reseller_tlds WHERE reseller_id = ? AND registry_id = ? AND tld = ?')
+                            ->execute([$id('reseller_id'), $target, $metadata['tld']]);
+                        break;
                     case 'price.set':
                     case 'price.delete':
                         $target = $id('registry_id');
@@ -208,5 +223,71 @@ final class Admin
         Audit::record($pdo, $actor, 'panel.admin.' . $action, null, $target, $ip,
             $metadata + array_intersect_key($input, array_flip(['reseller_id', 'enabled', 'role', 'status'])));
         return $target ?? 'Saved';
+    }
+
+    /** Shared panel/CLI account edit. UUID, credentials and wallet currency stay independent. */
+    public static function updateAccount(PDO $pdo, string $id, array $changes): void
+    {
+        $limits = ['username' => 64, 'display_name' => 255, 'company' => 255, 'email' => 254, 'phone' => 32, 'address' => 2000, 'country_code' => 2];
+        if ($changes === [] || array_diff_key($changes, $limits) !== []) {
+            throw new ApiException(422, 'invalid_account_fields', 'Edit username, display_name, company, email, phone, address or country_code. Currency and credentials use their existing controls.');
+        }
+        foreach ($changes as $field => &$value) {
+            if (!is_string($value) || !mb_check_encoding($value, 'UTF-8')) { throw new ApiException(422, 'invalid_account', 'Account fields must be UTF-8 strings.'); }
+            $value = trim($value);
+            if ($field === 'country_code') { $value = strtoupper($value); }
+            if (mb_strlen($value) > $limits[$field] || preg_match($field === 'address' ? '/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u' : '/[\x00-\x1F\x7F]/u', $value)
+                || $field === 'username' && preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/D', $value) !== 1
+                || $field === 'email' && $value !== '' && filter_var($value, FILTER_VALIDATE_EMAIL) === false
+                || $field === 'country_code' && $value !== '' && preg_match('/^[A-Z]{2}$/D', $value) !== 1) {
+                throw new ApiException(422, 'invalid_account', "Invalid account field: {$field}.");
+            }
+        }
+        unset($value);
+        $pdo->beginTransaction();
+        try {
+            $old = $pdo->prepare('SELECT username FROM resellers WHERE id = ? FOR UPDATE'); $old->execute([$id]);
+            $username = $old->fetchColumn();
+            if ($username === false) { throw new ApiException(404, 'user_not_found', 'Reseller was not found.'); }
+            $sets = implode(', ', array_map(static fn ($field) => "{$field} = ?", array_keys($changes)));
+            $pdo->prepare("UPDATE resellers SET {$sets} WHERE id = ?")->execute([...array_values($changes), $id]);
+            if (isset($changes['username']) && $changes['username'] !== $username) {
+                $pdo->prepare('UPDATE auth_tokens SET revoked_at = UTC_TIMESTAMP(6) WHERE reseller_id = ? AND revoked_at IS NULL')->execute([$id]);
+                $pdo->prepare('UPDATE resellers SET failed_logins = 0, locked_until = NULL WHERE id = ?')->execute([$id]);
+            }
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) { $pdo->rollBack(); }
+            if ($e instanceof \PDOException && ($e->errorInfo[1] ?? null) === 1062) {
+                throw new ApiException(409, 'username_exists', 'This username is already in use.');
+            }
+            throw $e;
+        }
+    }
+
+    /** Remove only unused zones; disabled rows retain the longest-suffix access boundary. */
+    public static function deleteTld(PDO $pdo, string $registry, string $tld): void
+    {
+        $tld = Access::tld($tld);
+        $name = Queue::lockName($registry);
+        $lock = $pdo->prepare('SELECT GET_LOCK(?, 0)'); $lock->execute([$name]);
+        if ((string) $lock->fetchColumn() !== '1') { throw new ApiException(409, 'registry_busy', 'Registry work is running. Disable this TLD or retry later.'); }
+        try {
+            $pdo->beginTransaction();
+            $row = $pdo->prepare('SELECT 1 FROM registry_tlds WHERE registry_id = ? AND tld = ? FOR UPDATE'); $row->execute([$registry, $tld]);
+            if (!$row->fetchColumn()) { throw new ApiException(404, 'unknown_tld', 'TLD was not found.'); }
+            $used = $pdo->prepare("SELECT 1 FROM object_ownership WHERE registry_id = ? AND object_type = 'domain'
+                AND (object_name = ? OR RIGHT(object_name, CHAR_LENGTH(?) + 1) = CONCAT('.', ?)) LIMIT 1");
+            $used->execute([$registry, $tld, $tld, $tld]);
+            $jobs = $pdo->prepare("SELECT 1 FROM epp_jobs WHERE registry_id = ? AND status IN ('queued', 'processing', 'pending', 'unknown') LIMIT 1"); $jobs->execute([$registry]);
+            if ($used->fetchColumn() || $jobs->fetchColumn()) { throw new ApiException(409, 'tld_in_use', 'This TLD has owned domains or the registry has unsettled jobs. Disable it instead.'); }
+            $pdo->prepare('DELETE FROM registry_prices WHERE registry_id = ? AND tld = ?')->execute([$registry, $tld]);
+            $pdo->prepare('DELETE FROM reseller_tlds WHERE registry_id = ? AND tld = ?')->execute([$registry, $tld]);
+            $pdo->prepare('DELETE FROM registry_tlds WHERE registry_id = ? AND tld = ?')->execute([$registry, $tld]);
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) { $pdo->rollBack(); }
+            throw $e;
+        } finally { $pdo->prepare('SELECT RELEASE_LOCK(?)')->execute([$name]); }
     }
 }

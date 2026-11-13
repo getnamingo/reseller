@@ -1,0 +1,8 @@
+ALTER TABLE resellers
+    ADD COLUMN display_name VARCHAR(255) NOT NULL DEFAULT '',
+    ADD COLUMN company VARCHAR(255) NOT NULL DEFAULT '',
+    ADD COLUMN email VARCHAR(254) NOT NULL DEFAULT '',
+    ADD COLUMN phone VARCHAR(32) NOT NULL DEFAULT '',
+    ADD COLUMN address VARCHAR(2000) NOT NULL DEFAULT '',
+    ADD COLUMN country_code CHAR(2) NOT NULL DEFAULT '';
+INSERT INTO schema_migrations (version) VALUES ('005_account_details');

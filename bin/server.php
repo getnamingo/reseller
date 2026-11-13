@@ -240,11 +240,14 @@ $server->on('Request', static function (Request $request, Response $response) us
         }
 
         if ($method === 'GET' && $path === '/v1/account') {
+            $profile = $pdo->prepare('SELECT display_name, company, email, phone, address, country_code FROM resellers WHERE id = ?');
+            $profile->execute([$user['id']]);
             $wallet = $pdo->prepare('SELECT available_balance, held_balance, currency FROM wallets WHERE reseller_id = ?');
             $wallet->execute([$user['id']]);
             $respond($response, 200, ['data' => [
                 'reseller_uuid' => $user['id'],
                 'username' => $user['username'],
+                'profile' => $profile->fetch(),
                 'wallet' => $wallet->fetch(),
             ]], $requestId);
             return;

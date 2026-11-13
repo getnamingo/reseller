@@ -183,6 +183,8 @@ try {
         Ledger::createJob($pdo, $a, $registry, 'domain.check', Util::uuid(), ['domains' => ['history.com']]);
     }
     $foreignJob = Ledger::createJob($pdo, $b, $registry, 'domain.check', Util::uuid(), ['domains' => ['private.net']]);
+    verify(request('/admin/resellers/' . $b)->getStatusCode() === 403, 'Reseller cannot open account editor');
+    verify(request('/admin/resellers/' . $b, 'POST', ['username' => 'hijacked'])->getStatusCode() === 403, 'Reseller cannot edit another account');
     verify(request('/admin/jobs/' . $foreignJob['job_id'])->getStatusCode() === 403, 'Reseller cannot investigate another reseller job');
     $historyHtml = body(request('/jobs?status=queued&command=domain.check'));
     verify(str_contains($historyHtml, '/jobs?page=2&amp;status=queued&amp;command=domain.check'), 'Job pagination retains filters');
@@ -250,6 +252,24 @@ try {
 
 
     login('administrator', $password);
+    $accountPage = request('/admin/resellers/' . $a);
+    verify($accountPage->getStatusCode() === 200 && str_contains(body($accountPage), 'name="username" value="reseller-a"') && str_contains(body($accountPage), 'name="address"'), 'Account editor preloads username and general details');
+    verify(request('/admin/resellers/' . $a, 'POST', ['company' => 'Example'], false)->getStatusCode() === 403, 'Account editing requires CSRF');
+    verify(request('/admin/resellers/' . $a, 'POST', ['reseller_id' => $b, 'company' => '<script>Company</script>', 'currency' => 'USD'])->getStatusCode() === 303, 'Admin can save general account details');
+    verify($pdo->query("SELECT company FROM resellers WHERE id='$a'")->fetchColumn() === '<script>Company</script>' && $pdo->query("SELECT company FROM resellers WHERE id='$b'")->fetchColumn() === '', 'Account editor uses route ID and cannot be redirected to another account');
+    verify($pdo->query("SELECT currency FROM resellers WHERE id='$a'")->fetchColumn() === 'EUR', 'Account edit does not change wallet currency');
+    $editedHtml = body(request('/admin/resellers/' . $a));
+    verify(str_contains($editedHtml, '&lt;script&gt;Company&lt;/script&gt;') && !str_contains($editedHtml, '<script>Company</script>'), 'Account details are HTML escaped');
+    verify(request('/admin/resellers/' . Util::uuid())->getStatusCode() === 404, 'Missing account editor returns 404');
+    verify(str_contains(body(request('/admin/resellers')), '/admin/resellers/' . $a), 'Reseller table links to editable accounts');
+    $tldHtml = body(request('/admin/tlds'));
+    verify(str_contains($tldHtml, 'value="tld.delete"') && str_contains($tldHtml, 'Remove unused TLD') && str_contains($tldHtml, 'value="tld.unassign"'), 'TLD table offers removal, state and assignment controls');
+    verify(request('/admin/tlds', 'POST', ['action' => 'tld.delete', 'registry_id' => $registry, 'tld' => 'com'])->getStatusCode() === 422, 'TLD removal requires explicit form confirmation');
+    verify(request('/admin/tlds', 'POST', ['action' => 'tld.delete', 'registry_id' => $registry, 'tld' => 'com', 'confirmed' => '1'])->getStatusCode() === 409, 'Panel blocks removal of used TLD');
+    $emptyRegistry = action('registry.save', ['name' => 'Unused registry', 'profile' => 'generic', 'config_json' => Util::json($config)]);
+    verify(request('/admin/tlds', 'POST', ['action' => 'tld.save', 'registry_id' => $emptyRegistry, 'tld' => 'test', 'enabled' => '1'])->getStatusCode() === 303, 'Panel adds TLD');
+    verify(request('/admin/tlds', 'POST', ['action' => 'tld.save', 'registry_id' => $emptyRegistry, 'tld' => 'test', 'enabled' => '0'])->getStatusCode() === 303, 'Panel edits TLD state');
+    verify(request('/admin/tlds', 'POST', ['action' => 'tld.delete', 'registry_id' => $emptyRegistry, 'tld' => 'test', 'confirmed' => '1'])->getStatusCode() === 303, 'Panel removes unused TLD');
     foreach (['resellers', 'registries', 'tlds', 'prices', 'deposits', 'jobs', 'ownership'] as $section) {
         verify(request('/admin/' . $section)->getStatusCode() === 200, 'Admin page renders: ' . $section);
     }
@@ -312,7 +332,7 @@ try {
     verify((int) $pdo->query('SELECT COUNT(*) FROM resellers WHERE role = 0')->fetchColumn() === 0, 'Migration defaults every existing account to reseller');
     verify((int) $pdo->query('SELECT COUNT(*) FROM registry_tlds')->fetchColumn() === 2, 'Migration backfills explicitly priced zones');
     verify((int) $pdo->query('SELECT COUNT(*) FROM reseller_tlds')->fetchColumn() === 6, 'Migration grants known zones to existing registry members');
-    verify((int) $pdo->query('SELECT COUNT(*) FROM schema_migrations')->fetchColumn() === 4, 'Migration version recorded');
+    verify((int) $pdo->query('SELECT COUNT(*) FROM schema_migrations')->fetchColumn() === 5, 'Migration version recorded');
     $_ENV['APP_ENV'] = 'production'; $_ENV['PANEL_ORIGIN'] = 'https://panel.example.test';
     $_SERVER['HTTPS'] = '';
     try {

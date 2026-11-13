@@ -9,6 +9,12 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 CREATE TABLE IF NOT EXISTS resellers (
     id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
     username VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE,
+    display_name VARCHAR(255) NOT NULL DEFAULT '',
+    company VARCHAR(255) NOT NULL DEFAULT '',
+    email VARCHAR(254) NOT NULL DEFAULT '',
+    phone VARCHAR(32) NOT NULL DEFAULT '',
+    address VARCHAR(2000) NOT NULL DEFAULT '',
+    country_code CHAR(2) NOT NULL DEFAULT '',
     password_hash VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     role TINYINT UNSIGNED NOT NULL DEFAULT 1,
     status ENUM('active', 'suspended') NOT NULL DEFAULT 'active',
@@ -212,3 +218,4 @@ INSERT IGNORE INTO schema_migrations (version) VALUES ('002_ownership_pricing');
 INSERT IGNORE INTO schema_migrations (version) VALUES ('003_foundry_panel');
 
 INSERT IGNORE INTO schema_migrations (version) VALUES ('004_lifecycle_queue');
+INSERT IGNORE INTO schema_migrations (version) VALUES ('005_account_details');

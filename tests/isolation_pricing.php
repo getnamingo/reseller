@@ -255,7 +255,7 @@ try {
     check((int) $pdo->query('SELECT period FROM registry_prices')->fetchColumn() === 0, 'Legacy price preserved without term');
     denied('price_not_configured', fn () => job($a, 'domain.create', ['domainname' => 'migrated.com', 'period' => 1]));
     $pdo->exec(file_get_contents(dirname(__DIR__) . '/database/schema.sql'));
-    check(countRows('schema_migrations') === 4, 'Fresh schema can be reapplied after migration');
+    check(countRows('schema_migrations') === 5, 'Fresh schema can be reapplied after migration');
     echo "PASS: {$checks} assertions\n";
 } finally {
     $pdo = null;
