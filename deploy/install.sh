@@ -52,6 +52,7 @@ db_root() {
 render_env() {
   sed -e "s|^APP_MASTER_KEY=.*|APP_MASTER_KEY=$1|" \
       -e "s|^DB_PASSWORD=.*|DB_PASSWORD=$2|" \
+      -e 's|^API_TRUSTED_PROXIES=.*|API_TRUSTED_PROXIES=127.0.0.1|' \
       -e "s|^PANEL_ORIGIN=.*|PANEL_ORIGIN=https://$3|" "$SOURCE_ROOT/.env.example"
 }
 
@@ -81,7 +82,9 @@ $1 {
     request_body {
         max_size 256KB
     }
-    reverse_proxy 127.0.0.1:9501
+    reverse_proxy 127.0.0.1:9501 {
+        header_up X-Forwarded-For {remote_host}
+    }
     header {
         -Server
         Strict-Transport-Security "max-age=31536000"

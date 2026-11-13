@@ -90,6 +90,17 @@ FPM account can read application configuration, while Caddy receives access only
 public files. Panel sessions live outside the web root. Existing Caddy sites are preserved;
 the original Caddyfile is backed up before adding the Namingo import.
 
+The installer sets `API_TRUSTED_PROXIES=127.0.0.1` and makes Caddy **overwrite**
+`X-Forwarded-For` with its socket client's IP. The API uses that single address for both
+login limiters and IP audit hashes only when its socket peer is explicitly trusted.
+Direct installations default to no trusted proxies. For a manually configured proxy,
+list exact proxy IPs separated by commas (no CIDRs/wildcards), restrict access to the
+backend listener, and overwrite this header rather than passing a caller's value or a
+forwarding chain. Missing/malformed/multi-address values fall back to the socket peer;
+untrusted peers' forwarded headers are ignored. The PHP-FPM panel continues to use
+its FastCGI `REMOTE_ADDR`. Run `tests/proxy.php` with the documented `TEST_MYSQL_*`
+settings to check identity resolution, independent login limits and audit hashing.
+
 This is a fresh-install helper, not an upgrade/reset command. It refuses existing app
 configuration, deployment files or an existing `namingo_api` database/user. If installation
 stops after creating credentials, fix the reported problem and complete the remaining

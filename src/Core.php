@@ -102,6 +102,27 @@ final class ApiException extends RuntimeException
 
 final class Util
 {
+    /** Accept a single proxy-overwritten address only from an explicitly trusted peer. */
+    public static function clientIp(string $peer, mixed $forwarded, string $trustedProxies = ''): string
+    {
+        $trusted = [];
+        foreach (explode(',', $trustedProxies) as $proxy) {
+            $proxy = trim($proxy);
+            if ($proxy === '') { continue; }
+            if (filter_var($proxy, FILTER_VALIDATE_IP) === false) {
+                throw new RuntimeException('API_TRUSTED_PROXIES must contain exact IP addresses separated by commas.');
+            }
+            $trusted[] = inet_ntop(inet_pton($proxy));
+        }
+        $peer = filter_var($peer, FILTER_VALIDATE_IP) === false ? 'unknown' : inet_ntop(inet_pton($peer));
+        if (in_array($peer, $trusted, true) && is_string($forwarded)) {
+            $forwarded = trim($forwarded);
+            // Lists, ports and malformed headers fail closed to the socket peer.
+            if (filter_var($forwarded, FILTER_VALIDATE_IP) !== false) { return inet_ntop(inet_pton($forwarded)); }
+        }
+        return $peer;
+    }
+
     public static function uuid(): string
     {
         $bytes = random_bytes(16);
