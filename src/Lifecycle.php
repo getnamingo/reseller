@@ -92,7 +92,7 @@ final class Lifecycle
             $stmt->execute([$job['parent_job_id'], $job['reseller_id'], $job['registry_id']]);
             $request = $stmt->fetch();
             if ($request === false || (Ownership::params($request)['op'] ?? '') !== 'request'
-                || (Ownership::params($request)['domainname'] ?? '') !== (Ownership::params($job)['domainname'] ?? '')) { return false; }
+                || strtolower(Ownership::params($request)['domainname'] ?? '') !== strtolower(Ownership::params($job)['domainname'] ?? '')) { return false; }
         }
         $status = self::decision($job, $observation, $clientId, $request);
         if ($status === null) { return false; }
