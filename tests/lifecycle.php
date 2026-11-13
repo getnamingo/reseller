@@ -19,7 +19,7 @@ function denied(string $code, callable $call): void {
     throw new RuntimeException('Expected ' . $code);
 }
 function job(string $command, array $params, ?string $owner = null): array {
-    global $pdo, $registry, $a; return Ledger::createJob($pdo, $owner ?? $a, $registry, $command, Util::uuid(), $params);
+    global $pdo, $registry, $a; if ($command === 'domain.create') { $params += ['authInfoPw'=>'test-secret']; } return Ledger::createJob($pdo, $owner ?? $a, $registry, $command, Util::uuid(), $params);
 }
 function raw(array $job): array { global $pdo; $s=$pdo->prepare('SELECT * FROM epp_jobs WHERE id = ?');$s->execute([$job['job_id']]);return $s->fetch(); }
 function own(string $name): array|false { global $pdo, $registry; $s=$pdo->prepare("SELECT * FROM object_ownership WHERE registry_id = ? AND object_type = 'domain' AND object_name = ?");$s->execute([$registry,$name]);return $s->fetch(); }

@@ -22,7 +22,7 @@ if (($argv[1] ?? '') === 'race') {
     echo "ready\n";
     fgets(STDIN);
     try {
-        Ledger::createJob($pdo, $argv[4], $argv[3], 'domain.create', Util::uuid(), ['domainname' => 'race.com', 'period' => 1]);
+        Ledger::createJob($pdo, $argv[4], $argv[3], 'domain.create', Util::uuid(), ['domainname' => 'race.com', 'period' => 1, 'authInfoPw' => 'test-secret']);
         echo 'queued';
     } catch (ApiException $e) {
         echo $e->errorCode;
@@ -69,6 +69,7 @@ function own(string $type, string $name, string $reseller): void
 function job(string $reseller, string $command, array $params, ?string $key = null): array
 {
     global $pdo, $registry;
+    if ($command === 'domain.create') { $params += ['authInfoPw' => 'test-secret']; }
     return Ledger::createJob($pdo, $reseller, $registry, $command, $key ?? Util::uuid(), $params);
 }
 function finish(array $job, string $status = 'succeeded', array $result = []): void
@@ -145,7 +146,7 @@ try {
     denied('object_not_owned', fn () => job($a, 'domain.update_contact', ['domainname' => 'one.com', 'new_contactid' => 'b-contact']));
     denied('object_not_owned', fn () => job($a, 'domain.create', ['domainname' => 'ref.com', 'period' => 1, 'contacts' => ['tech' => 'b-contact']]));
     denied('object_not_owned', fn () => job($b, 'host.create', ['hostname' => 'ns2.one.com']));
-    $j = job($a, 'domain.update_contact', ['domainname' => 'one.com', 'new_contactid' => 'a-contact']); finish($j);
+    $j = job($a, 'domain.update_contact', ['domainname' => 'one.com', 'contacttype' => 'registrant', 'new_contactid' => 'a-contact']); finish($j);
     $j = job($a, 'domain.update_ns', ['domainname' => 'one.com', 'ns1' => 'ns.shared.net']); finish($j);
     $j = job($b, 'domain.check', ['domains' => ['one.com']]); finish($j);
     check(Ledger::fetchJob($pdo, $j['job_id'])['price'] === '0.0000', 'Explicit free check');
@@ -201,18 +202,24 @@ try {
     finish($free);
 
     // Recheck references after queueing: no stale queued request may use a deleted contact.
-    $j = job($a, 'domain.update_contact', ['domainname' => 'one.com', 'new_contactid' => 'a-contact']);
+    $j = job($a, 'domain.update_contact', ['domainname' => 'one.com', 'contacttype' => 'registrant', 'new_contactid' => 'a-contact']);
     $delete = job($a, 'contact.delete', ['contact' => 'a-contact']); finish($delete);
     denied('object_not_owned', fn () => Ownership::authorize($pdo, $registry, $a, 'domain.update_contact',
-        ['domainname' => 'one.com', 'new_contactid' => 'a-contact'], 'generic', $j['job_id']));
+        ['domainname' => 'one.com', 'contacttype' => 'registrant', 'new_contactid' => 'a-contact'], 'generic', $j['job_id']));
     finish($j, 'rejected');
 
     $pdo->prepare("UPDATE registries SET profile = 'FRED' WHERE id = ?")->execute([$registry]);
-    $j = job($a, 'host.create', ['hostname' => 'ns.test.net', 'nsid' => 'nsset-a']); finish($j);
+    own('contact', 'ns-tech', $a);
+    $j = job($a, 'host.create', ['hostname' => 'ns.test.net', 'ipaddress' => '192.0.2.1',
+        'hostname2' => 'ns2.test.net', 'ipaddress2' => '192.0.2.2', 'nsid' => 'nsset-a', 'nstech' => 'ns-tech']); finish($j);
     denied('object_not_owned', fn () => job($b, 'host.update', ['nsid' => 'nsset-a']));
-    $j = job($a, 'host.update', ['nsid' => 'nsset-a']); finish($j);
+    $j = job($a, 'host.update', ['nsid' => 'nsset-a', 'newhostname' => 'ns3.test.net', 'oldhostname' => 'ns.test.net',
+        'newipaddress' => '192.0.2.3', 'nstech_new' => 'ns-tech', 'nstech_old' => 'ns-tech']); finish($j);
     $pdo->prepare("UPDATE registries SET profile = 'LT' WHERE id = ?")->execute([$registry]);
-    $j = job($a, 'contact.create', []); finish($j, 'succeeded', ['id' => 'generated-lt']);
+    $j = job($a, 'contact.create', ['type' => 'loc', 'firstname' => 'First', 'lastname' => 'Last', 'companyname' => '',
+        'address1' => 'Street', 'city' => 'City', 'state' => '', 'postcode' => '1000', 'country' => 'LT',
+        'fullphonenumber' => '+370.123456789', 'email' => 'test@example.com', 'orgcode' => '', 'role' => 'registrant']);
+    finish($j, 'succeeded', ['id' => 'generated-lt']);
     $j = job($a, 'contact.info', ['contact' => 'generated-lt']); finish($j);
     denied('object_not_owned', fn () => job($b, 'contact.info', ['contact' => 'generated-lt']));
 
