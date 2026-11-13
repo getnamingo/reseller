@@ -151,6 +151,30 @@ try {
         verify($response->getStatusCode() === 200, 'Reseller page renders: ' . $path . ' ' . body($response));
         verify(!str_contains(body($response), $bearer) && !str_contains(body($response), 'upstream-secret'), 'No bearer token or registry secrets in HTML');
     }
+    $walletHtml = body(request('/wallet'));
+    verify(str_contains($walletHtml, 'action="/wallet/deposits"') && str_contains($walletHtml, 'only after receipt of funds is verified'), 'Wallet offers a deposit request with approval explanation');
+    verify(preg_match('/name="reference" value="[a-f0-9-]{36}"/', $walletHtml) === 1, 'Deposit form generates a reusable reference');
+    $depositInput = ['amount' => '25.50', 'reference' => Util::uuid(), 'currency' => 'USD', 'reseller_id' => $b];
+    verify(request('/wallet/deposits', 'POST', $depositInput, false)->getStatusCode() === 403, 'Deposit request requires CSRF');
+    verify(request('/wallet/deposits', 'POST', $depositInput, true, 'https://attacker.invalid')->getStatusCode() === 403, 'Cross-origin deposit blocked');
+    foreach (['0', '-1', '1e3', '25.12345'] as $amount) {
+        verify(request('/wallet/deposits', 'POST', array_replace($depositInput, ['amount' => $amount]))->getStatusCode() === 422, 'Invalid deposit amount is rejected');
+    }
+    verify(request('/wallet/deposits', 'POST', array_replace($depositInput, ['reference' => '<script>']))->getStatusCode() === 422, 'Invalid deposit reference rejected');
+    $balance = $pdo->query("SELECT available_balance FROM wallets WHERE reseller_id='$a'")->fetchColumn();
+    $depositId = Util::uuid();
+    for ($retry = 0; $retry < 2; ++$retry) {
+        $mock->append(new Response(202, [], Util::json(['data' => ['deposit_uuid' => $depositId, 'status' => 'pending']])));
+        verify(request('/wallet/deposits', 'POST', $depositInput)->getHeaderLine('Location') === '/wallet', 'Deposit submitted through API and redirects to wallet');
+        $sent = end($history)['request'];
+        verify($sent->getUri()->getPath() === '/v1/deposits' && $sent->getHeaderLine('Authorization') === 'Bearer ' . $bearer, 'Deposit uses scoped API bearer');
+        verify(json_decode((string)$sent->getBody(), true) === ['amount' => '25.5000', 'currency' => 'EUR', 'reference' => $depositInput['reference']], 'Deposit fixes currency to wallet, preserves retry reference, and ignores foreign reseller');
+    }
+    verify(str_contains(body(request('/wallet')), $depositId), 'Wallet confirms deposit reference after submission');
+    verify($pdo->query("SELECT available_balance FROM wallets WHERE reseller_id='$a'")->fetchColumn() === $balance, 'Panel request never credits wallet directly');
+    $mock->append(new Response(409, [], Util::json(['error' => ['message' => 'Reference already used with a different amount.']])));
+    verify(request('/wallet/deposits', 'POST', $depositInput)->getStatusCode() === 409, 'Deposit API errors are shown without reporting success');
+    $history = [];
     $objects = body(request('/domains'));
     verify(str_contains($objects, 'own.com') && !str_contains($objects, 'private.net'), 'Object list scoped to current reseller');
     verify(!str_contains(body(request('/prices')), '999.0000'), 'Other reseller price override hidden');
@@ -159,6 +183,7 @@ try {
         Ledger::createJob($pdo, $a, $registry, 'domain.check', Util::uuid(), ['domains' => ['history.com']]);
     }
     $foreignJob = Ledger::createJob($pdo, $b, $registry, 'domain.check', Util::uuid(), ['domains' => ['private.net']]);
+    verify(request('/admin/jobs/' . $foreignJob['job_id'])->getStatusCode() === 403, 'Reseller cannot investigate another reseller job');
     $historyHtml = body(request('/jobs?status=queued&command=domain.check'));
     verify(str_contains($historyHtml, '/jobs?page=2&amp;status=queued&amp;command=domain.check'), 'Job pagination retains filters');
     verify(!str_contains($historyHtml, $foreignJob['job_id']), 'Panel history cannot show another reseller job');
@@ -228,12 +253,30 @@ try {
     foreach (['resellers', 'registries', 'tlds', 'prices', 'deposits', 'jobs', 'ownership'] as $section) {
         verify(request('/admin/' . $section)->getStatusCode() === 200, 'Admin page renders: ' . $section);
     }
+    verify(str_contains(body(request('/admin/jobs')), '/admin/jobs/' . $foreignJob['job_id']), 'Admin job table links to job details');
+    Ledger::completeJob($pdo, $foreignJob['job_id'], 'rejected', ['code' => 2304, 'message' => '<script>registry failure</script>'], 2304);
+    $pdo->prepare("UPDATE epp_jobs SET last_error = 'Support diagnostic' WHERE id = ?")->execute([$foreignJob['job_id']]);
+    $adminDetail = request('/admin/jobs/' . $foreignJob['job_id']);
+    verify($adminDetail->getStatusCode() === 200 && str_contains(body($adminDetail), 'reseller-b') && str_contains(body($adminDetail), $b), 'Admin can investigate another reseller and identify its owner');
+    verify(str_contains(body($adminDetail), '2304') && str_contains(body($adminDetail), 'Support diagnostic') && str_contains(body($adminDetail), 'registry failure'), 'Admin details include registry response, EPP code and last error');
+    verify(!str_contains(body($adminDetail), '<script>registry failure</script>') && str_contains(body($adminDetail), '&lt;script&gt;'), 'Admin response is HTML escaped');
+    verify(!str_contains(body($adminDetail), 'upstream-secret') && !str_contains(body($adminDetail), $bearer), 'Admin details do not expose registry configuration or API token');
+    verify(!str_contains(body($adminDetail), 'action="/lifecycle"') && !str_contains(body($adminDetail), '/reconcile"'), 'Admin investigation does not submit reseller-scoped actions with admin token');
+    verify(request('/admin/jobs/' . Util::uuid())->getStatusCode() === 404, 'Missing admin job returns 404');
+    $supportJob = Ledger::createJob($pdo, $b, $registry, 'domain.check', Util::uuid(), ['domains' => ['private.net']]);
+    Ledger::completeJob($pdo, $supportJob['job_id'], 'unknown', ['error' => 'timeout'], null);
+    $supportHtml = body(request('/admin/jobs/' . $supportJob['job_id']));
+    verify(str_contains($supportHtml, 'action="/admin/jobs"') && str_contains($supportHtml, 'name="id" value="' . $supportJob['job_id'] . '"') && str_contains($supportHtml, 'name="confirmed"'), 'Admin details offer verified resolution for the selected unknown job');
+    verify(request('/admin/jobs', 'POST', ['action' => 'job.resolve', 'id' => $supportJob['job_id'], 'resolution' => 'release', 'confirmed' => '1'], false)->getStatusCode() === 403, 'Detail resolution still requires CSRF');
+    verify(request('/admin/jobs', 'POST', ['action' => 'job.resolve', 'id' => $supportJob['job_id'], 'resolution' => 'release'])->getStatusCode() === 422, 'Detail resolution still requires independent verification');
+    verify(request('/admin/jobs', 'POST', ['action' => 'job.resolve', 'id' => $supportJob['job_id'], 'resolution' => 'release', 'confirmed' => '1'])->getStatusCode() === 303, 'Admin can resolve investigated job using existing action');
     verify(request('/admin/tlds', 'POST', ['action' => 'tld.save', 'registry_id' => $registry, 'tld' => 'test', 'enabled' => '1'], false)->getStatusCode() === 403, 'Admin mutations require CSRF');
     verify(request('/admin/tlds', 'POST', ['action' => 'user.role', 'reseller_id' => $a, 'role' => '0'])->getStatusCode() === 422, 'Admin action allowlist tied to page');
     $created = request('/admin/resellers', 'POST', ['action' => 'user.create', 'username' => 'panel-created', 'currency' => 'EUR', 'password' => $password, 'password_confirm' => $password]);
     verify($created->getStatusCode() === 303 && (int) $pdo->query("SELECT role FROM resellers WHERE username = 'panel-created'")->fetchColumn() === 1, 'Panel creates role-1 reseller in main tables');
     $pdo->prepare('UPDATE resellers SET role = 1 WHERE id = ?')->execute([$rootUser]);
     verify(request('/admin/resellers')->getStatusCode() === 403, 'Role demotion takes effect in current panel session');
+    verify(request('/admin/jobs/' . $foreignJob['job_id'])->getStatusCode() === 403, 'Role demotion immediately blocks cross-reseller job details');
     $pdo->prepare('UPDATE resellers SET role = 0 WHERE id = ?')->execute([$rootUser]);
     login('reseller-a', $password);
     action('tokens.revoke', ['reseller_id' => $a]);
