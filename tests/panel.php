@@ -63,7 +63,8 @@ function request(string $path, string $method = 'GET', array $data = [], bool $c
         $data['csrf'] = $_SESSION['csrf'];
     }
     $request = new ServerRequest($method, 'http://localhost' . $path, $origin === '' ? [] : ['Origin' => $origin], '', '1.1', ['REMOTE_ADDR' => '127.0.0.1']);
-    return $panel->handle($request->withParsedBody($data), new Response());
+    parse_str((string) parse_url($path, PHP_URL_QUERY), $query);
+    return $panel->handle($request->withQueryParams($query)->withParsedBody($data), new Response());
 }
 function body(Response $response): string { return (string) $response->getBody(); }
 function action(string $action, array $params): string
@@ -145,7 +146,7 @@ try {
     verify(Auth::authenticate($pdo, 'Bearer ' . $bearer)['id'] === $a, 'Panel uses real scoped API token');
     action('object.assign', ['registry_id' => $registry, 'reseller_id' => $a, 'object_type' => 'domain', 'object_name' => 'own.com']);
     action('object.assign', ['registry_id' => $registry, 'reseller_id' => $b, 'object_type' => 'domain', 'object_name' => 'private.net']);
-    foreach (['/', '/account', '/prices', '/access', '/wallet', '/domains', '/checks'] as $path) {
+    foreach (['/', '/account', '/prices', '/access', '/wallet', '/domains', '/checks', '/jobs'] as $path) {
         $response = request($path);
         verify($response->getStatusCode() === 200, 'Reseller page renders: ' . $path . ' ' . body($response));
         verify(!str_contains(body($response), $bearer) && !str_contains(body($response), 'upstream-secret'), 'No bearer token or registry secrets in HTML');
@@ -153,6 +154,17 @@ try {
     $objects = body(request('/domains'));
     verify(str_contains($objects, 'own.com') && !str_contains($objects, 'private.net'), 'Object list scoped to current reseller');
     verify(!str_contains(body(request('/prices')), '999.0000'), 'Other reseller price override hidden');
+    verify(str_contains(body(request('/jobs')), 'All statuses') && str_contains(body(request('/jobs')), 'All commands'), 'Job history filters are available');
+    for ($i = 0; $i < 51; ++$i) {
+        Ledger::createJob($pdo, $a, $registry, 'domain.check', Util::uuid(), ['domains' => ['history.com']]);
+    }
+    $foreignJob = Ledger::createJob($pdo, $b, $registry, 'domain.check', Util::uuid(), ['domains' => ['private.net']]);
+    $historyHtml = body(request('/jobs?status=queued&command=domain.check'));
+    verify(str_contains($historyHtml, '/jobs?page=2&amp;status=queued&amp;command=domain.check'), 'Job pagination retains filters');
+    verify(!str_contains($historyHtml, $foreignJob['job_id']), 'Panel history cannot show another reseller job');
+    $lastPage = body(request('/jobs?page=2&status=queued&command=domain.check'));
+    verify(substr_count($lastPage, '<td class="uuid">') === 1 && str_contains($lastPage, 'Previous'), 'Panel can browse beyond the first 50 jobs');
+
     foreach (['resellers', 'registries', 'tlds', 'prices', 'deposits', 'jobs', 'ownership'] as $section) {
         verify(request('/admin/' . $section)->getStatusCode() === 403, 'Reseller cannot view admin page');
         verify(request('/admin/' . $section, 'POST', ['action' => 'user.role', 'reseller_id' => $a, 'role' => '0'])->getStatusCode() === 403, 'Reseller cannot submit admin actions');

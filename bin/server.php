@@ -12,6 +12,7 @@ use Namingo\ResellerApi\Crypto;
 use Namingo\ResellerApi\Db;
 use Namingo\ResellerApi\EppWorker;
 use Namingo\ResellerApi\Ledger;
+use Namingo\ResellerApi\SelfService;
 use Namingo\ResellerApi\Util;
 use Swoole\Http\Request;
 use Swoole\Http\Response;
@@ -248,6 +249,14 @@ $server->on('Request', static function (Request $request, Response $response) us
             return;
         }
 
+        if (in_array($path, ['/v1/jobs', '/v1/prices', '/v1/domains'], true)) {
+            if ($method !== 'GET') {
+                throw new ApiException(405, 'method_not_allowed', 'Use GET for self-service listings.');
+            }
+            $respond($response, 200, SelfService::listing($pdo, $user['id'], substr($path, 4), $request->get ?? []), $requestId);
+            return;
+        }
+
         if ($method === 'GET' && $path === '/v1/commands') {
             $respond($response, 200, ['data' => [
                 'commands' => CommandCatalog::all(),
@@ -401,3 +410,4 @@ $server->on('Request', static function (Request $request, Response $response) us
 });
 
 $server->start();
+

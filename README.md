@@ -322,6 +322,7 @@ A completed call returns its job. A slow call returns HTTP `202`; poll `GET /v1/
 
 Other endpoints:
 
+- `GET /v1/jobs`, `GET /v1/prices`, and `GET /v1/domains` (paginated; see self-service below)
 - `GET /v1/account`
 - `GET /v1/registries`
 - `GET /v1/commands`
@@ -521,3 +522,61 @@ CSRF/origin checks, role changes, session/token revocation, scoped prices and ob
 TLD revocation before EPP execution, and upgrading a v2 database. No live registry
 commands are sent. Upstream Foundry attribution is in `panel/UPSTREAM.md` and its MIT
 notice is preserved in `panel/LICENSE-FOUNDRY`.
+
+## Reseller self-service API
+
+These authenticated, read-only endpoints use the bearer token's reseller identity.
+Role 0 accounts also receive only their own data through these endpoints. A query
+parameter cannot select another reseller. No database migration is needed.
+
+| Endpoint | Optional filters | Returned data |
+| --- | --- | --- |
+| `GET /v1/jobs` | `registry_uuid`, `command`, `status` | All historical job metadata: UUID, registry, command, status, price/currency, EPP code and timestamps. Request/response payloads and secrets are excluded; use the existing `GET /v1/jobs/{uuid}` for a permitted individual result. |
+| `GET /v1/prices` | `registry_uuid`, `command`, `tld`, `period` | Effective global/reseller price rows for enabled registry/TLD access, with registry UUID/name, command, TLD, exact term, total amount/currency and scope. Own overrides replace matching global rows. |
+| `GET /v1/domains` | `registry_uuid`, `name`, `active` | Currently owned or reserved domains, registry UUID/name, boolean active flag and optional pending-job UUID. Contacts and hosts are excluded. |
+
+All three accept `limit` (1–100, default 50) and `offset` (0–1000000, default 0).
+Responses follow this shape, plus the normal `request_id`:
+
+```json
+{
+  "data": [],
+  "pagination": {
+    "limit": 50,
+    "offset": 0,
+    "has_more": false,
+    "next_offset": null
+  }
+}
+```
+
+Use `next_offset` while `has_more` is true. Jobs sort newest first with a UUID
+tie-breaker; domains sort by name and registry UUID. Offset pages reflect current
+data, so newly submitted jobs may shift page boundaries between requests. Amounts
+remain exact decimal strings. `status` accepts `queued`, `processing`, `succeeded`,
+`rejected` or `unknown`; `command` must be an exposed command. Domain `name` is a
+case-insensitive literal ASCII fragment (no wildcards); `active` accepts `1` or `0`.
+Price `period` accepts 0–10 (0 means per operation) and `tld` is an exact configured
+price suffix, optionally with a leading dot. Missing prices are never synthesized.
+Price rows retain the existing longest-zone and reseller-override semantics; this is
+a price list rather than a live registry premium-domain quote.
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" "$API_BASE_URL/v1/jobs?status=succeeded&limit=50"
+curl -H "Authorization: Bearer $TOKEN" "$API_BASE_URL/v1/prices?command=domain.create&tld=com&period=1"
+curl -H "Authorization: Bearer $TOKEN" "$API_BASE_URL/v1/domains?name=example&active=1"
+```
+
+Own historical jobs and ownership records remain visible after registry access is
+revoked; unavailable current prices are hidden. None of these listings sends an EPP
+command, creates a charge or reveals registry credentials.
+
+The panel's **Jobs** page provides paginated history with status, command and registry
+filters. Its existing **Prices** and **Objects** pages already provide the other two
+browsing functions; availability jobs link to their existing result page. No domain
+provisioning controls are added.
+
+Run `tests/self_service.php` with the same `TEST_MYSQL_*` settings as the other suites.
+It creates/removes its own test database and checks cross-reseller/admin isolation,
+stable pagination, filters, effective pricing, pending domains, revoked access and
+payload redaction without sending registry commands.
