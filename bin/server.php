@@ -55,6 +55,8 @@ if ($tls && Config::production() && ((fileperms($tlsKey) & 0027) !== 0)) {
     throw new RuntimeException('The API TLS private key may be group-readable but must not be group-writable or accessible to others.');
 }
 $loopback = in_array($host, ['127.0.0.1', '::1', 'localhost'], true);
+$trustedProxies = Config::get('API_TRUSTED_PROXIES', '') ?? '';
+Util::clientIp('127.0.0.1', null, $trustedProxies); // Reject invalid trust configuration at startup.
 if (Config::production() && !$tls && !$loopback && !Config::bool('API_ALLOW_INSECURE_HTTP', false)) {
     throw new RuntimeException('Production plaintext HTTP may bind only to loopback. Configure API TLS or a loopback reverse proxy.');
 }
@@ -183,6 +185,7 @@ $server->on('Request', static function (Request $request, Response $response) us
     $allowRate,
     $respond,
     $readBody,
+    $trustedProxies,
 ): void {
     $incomingRequestId = (string) ($request->header['x-request-id'] ?? '');
     $requestId = preg_match('/^[A-Za-z0-9._:-]{8,64}$/D', $incomingRequestId) === 1 ? $incomingRequestId : Util::uuid();
@@ -190,7 +193,8 @@ $server->on('Request', static function (Request $request, Response $response) us
     $uri = (string) ($request->server['request_uri'] ?? '/');
     $path = parse_url($uri, PHP_URL_PATH) ?: '/';
     $path = $path !== '/' ? rtrim($path, '/') : $path;
-    $ip = (string) ($request->server['remote_addr'] ?? 'unknown');
+    $ip = Util::clientIp((string) ($request->server['remote_addr'] ?? 'unknown'),
+        $request->header['x-forwarded-for'] ?? null, $trustedProxies);
 
     try {
         if ($method === 'GET' && $path === '/healthz') {

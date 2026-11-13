@@ -55,14 +55,76 @@ The API exposes these commands:
 
 An exposed command can still be unsupported by a particular registry protocol—for example, EURid does not support host objects. That registry rejection is returned as a rejected job.
 
-## Ubuntu 26.04 installation
+## Ubuntu 26.04 and Debian 13 installation
 
-The package helper adds Ondřej Surý's PHP PPA, installs PHP 8.5 and `php8.5-swoole`, and configures the MariaDB Community 11.8 repository:
+On a fresh **Ubuntu 26.04** or **Debian 13** systemd server, point separate panel and
+API DNS hostnames at the server and allow inbound TCP 80/443 before installing:
 
 ```bash
-sudo bash deploy/install-ubuntu-26.04.sh
-sudo mariadb-secure-installation
+sudo apt-get update
+sudo apt-get install -y git
+git clone https://github.com/getnamingo/reseller.git
+cd reseller
+sudo bash deploy/install.sh
 ```
+
+The installer asks for both hostnames, the first administrator username and wallet
+currency, then asks you to confirm the installation summary. Its password prompt is
+hidden; the password is shared by the API and panel and is never passed on the command
+line. Use an interactive terminal rather than piping the installer into a shell.
+
+It installs PHP 8.5/Swoole/FPM from [Surý's current repository](https://deb.sury.org/)
+(`https://packages.sury.org/php/`, using `resolute` or `trixie`, not the old Ubuntu PPA),
+the distribution's MariaDB 11.8 packages, Composer and [official Caddy packages](https://caddyserver.com/docs/install).
+It then copies the application to `/opt/namingo-reseller-api`, installs locked Composer
+dependencies/assets, generates `.env` secrets, creates and migrates the local database,
+removes migration privileges from the application DB account and creates a role-0
+administrator. It installs/enables the README systemd API service, a dedicated PHP-FPM
+pool and Caddy HTTPS sites for the API and panel. Public HTTPS readiness checks must
+pass before it reports success. Registry credentials, TLD grants and prices are configured
+after login; the installer does not create registry accounts or credit wallets.
+
+The API remains bound to `127.0.0.1:9501`; Caddy publishes it on the API hostname. Only
+`panel/public` is web-accessible on the panel hostname. The separate `namingo-panel`
+FPM account can read application configuration, while Caddy receives access only to
+public files. Panel sessions live outside the web root. Existing Caddy sites are preserved;
+the original Caddyfile is backed up before adding the Namingo import.
+
+The installer sets `API_TRUSTED_PROXIES=127.0.0.1` and makes Caddy **overwrite**
+`X-Forwarded-For` with its socket client's IP. The API uses that single address for both
+login limiters and IP audit hashes only when its socket peer is explicitly trusted.
+Direct installations default to no trusted proxies. For a manually configured proxy,
+list exact proxy IPs separated by commas (no CIDRs/wildcards), restrict access to the
+backend listener, and overwrite this header rather than passing a caller's value or a
+forwarding chain. Missing/malformed/multi-address values fall back to the socket peer;
+untrusted peers' forwarded headers are ignored. The PHP-FPM panel continues to use
+its FastCGI `REMOTE_ADDR`. Run `tests/proxy.php` with the documented `TEST_MYSQL_*`
+settings to check identity resolution, independent login limits and audit hashing.
+
+This is a fresh-install helper, not an upgrade/reset command. It refuses existing app
+configuration, deployment files or an existing `namingo_api` database/user. If installation
+stops after creating credentials, fix the reported problem and complete the remaining
+steps manually; do not delete `.env` or recreate the database. For HTTPS failures, check
+DNS (including AAAA records), firewall/NAT and `journalctl -u caddy`. You can inspect all
+services with:
+
+```bash
+sudo systemctl status namingo-reseller-api php8.5-fpm mariadb caddy
+```
+
+Installer regression checks can be run without root or installing services:
+
+```bash
+bash tests/install.sh
+# Optionally also validate generated configurations with installed binaries:
+CADDY_BIN=/usr/bin/caddy FPM_BIN=/usr/sbin/php-fpm8.5 bash tests/install.sh
+```
+
+### Manual installation alternative
+
+The following is the manual setup reference; the automatic installer already performs
+these steps. Install the PHP 8.5 CLI/FPM extensions, Swoole, MariaDB and Caddy packages
+from the repositories above first.
 
 Verify the exact packages before deploying:
 
@@ -497,6 +559,10 @@ the updated API/panel. Existing accounts receive empty optional details. Run
 editing, token behavior, CLI commands, migration and safe TLD removal.
 
 ### Install or upgrade
+
+The automatic `deploy/install.sh` setup already installs the panel with a dedicated
+`namingo-panel` PHP-FPM pool. The steps below are the manual installation/upgrade
+alternative; keep the generated dedicated pool and Caddy configuration when upgrading.
 
 1. Stop submissions/workers during the database upgrade and back up the database.
    Run `composer install --no-dev --classmap-authoritative`, then `php8.5 bin/manage.php migrate`.
