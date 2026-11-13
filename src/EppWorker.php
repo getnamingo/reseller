@@ -81,6 +81,14 @@ final class EppWorker
             }
             $lockAcquired = true;
 
+            $access = $pdo->prepare("SELECT 1 FROM reseller_registries rr JOIN registries r ON r.id = rr.registry_id
+                JOIN resellers u ON u.id = rr.reseller_id
+                WHERE rr.registry_id = ? AND rr.reseller_id = ? AND rr.enabled = 1 AND r.enabled = 1 AND u.status = 'active'");
+            $access->execute([$job['registry_id'], $job['reseller_id']]);
+            if (!$access->fetchColumn()) {
+                throw new ApiException(403, 'registry_not_permitted', 'Registry access has been revoked.');
+            }
+            Access::domains($pdo, $job['registry_id'], $job['reseller_id'], $job['command'], $request['params']);
             Ownership::authorize($pdo, $job['registry_id'], $job['reseller_id'], $job['command'],
                 $request['params'], $profile, $jobId);
 

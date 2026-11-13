@@ -3,3 +3,6 @@
 /*.pem
 /registry*.json
 /.phpunit.cache/
+
+/var/
+/panel/public/assets/

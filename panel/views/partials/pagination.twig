@@ -1,0 +1,5 @@
+{% if paginate %}<nav class="d-flex justify-content-between align-items-center mt-3" aria-label="Pagination">
+  <span>{% if page > 1 %}<a class="btn btn-outline-secondary" href="{{ path }}?page={{ page - 1 }}">Previous</a>{% endif %}</span>
+  <span class="text-secondary">Page {{ page }}</span>
+  <span>{% if next %}<a class="btn btn-outline-secondary" href="{{ path }}?page={{ page + 1 }}">Next</a>{% endif %}</span>
+</nav>{% endif %}

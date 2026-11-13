@@ -10,12 +10,14 @@ CREATE TABLE IF NOT EXISTS resellers (
     id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
     username VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL UNIQUE,
     password_hash VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    role TINYINT UNSIGNED NOT NULL DEFAULT 1,
     status ENUM('active', 'suspended') NOT NULL DEFAULT 'active',
     currency CHAR(3) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     failed_logins SMALLINT UNSIGNED NOT NULL DEFAULT 0,
     locked_until DATETIME(6) NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    CONSTRAINT chk_reseller_role CHECK (role IN (0, 1)),
     CONSTRAINT chk_reseller_currency CHECK (currency REGEXP '^[A-Z]{3}$')
 ) ENGINE=InnoDB;
 
@@ -62,6 +64,31 @@ CREATE TABLE IF NOT EXISTS reseller_registries (
     PRIMARY KEY (reseller_id, registry_id),
     CONSTRAINT fk_rr_reseller FOREIGN KEY (reseller_id) REFERENCES resellers(id),
     CONSTRAINT fk_rr_registry FOREIGN KEY (registry_id) REFERENCES registries(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS registry_tlds (
+    registry_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    tld VARCHAR(247) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    enabled TINYINT(1) NOT NULL DEFAULT 1,
+    PRIMARY KEY (registry_id, tld),
+    CONSTRAINT fk_tld_registry FOREIGN KEY (registry_id) REFERENCES registries(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS reseller_tlds (
+    reseller_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    registry_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    tld VARCHAR(247) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    enabled TINYINT(1) NOT NULL DEFAULT 1,
+    PRIMARY KEY (reseller_id, registry_id, tld),
+    CONSTRAINT fk_rt_access FOREIGN KEY (reseller_id, registry_id) REFERENCES reseller_registries(reseller_id, registry_id),
+    CONSTRAINT fk_rt_tld FOREIGN KEY (registry_id, tld) REFERENCES registry_tlds(registry_id, tld)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS auth_login_limits (
+    ip_hash BINARY(32) PRIMARY KEY,
+    window_started DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    attempts INT UNSIGNED NOT NULL DEFAULT 1,
+    INDEX idx_login_window (window_started)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS registry_prices (
@@ -169,3 +196,5 @@ CREATE TABLE IF NOT EXISTS audit_events (
 INSERT IGNORE INTO schema_migrations (version) VALUES ('001_initial');
 
 INSERT IGNORE INTO schema_migrations (version) VALUES ('002_ownership_pricing');
+
+INSERT IGNORE INTO schema_migrations (version) VALUES ('003_foundry_panel');

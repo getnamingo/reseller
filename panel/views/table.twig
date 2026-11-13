@@ -1,0 +1,18 @@
+{% extends 'layouts/app.twig' %}
+{% import 'partials/table.twig' as tables %}
+{% block content %}
+{% if note %}<p class="text-secondary">{{ note }}</p>{% endif %}
+{% if path == '/wallet' %}
+<div class="row row-cards mb-4">
+  <div class="col-md-6"><div class="card card-body"><div class="subheader">Available balance</div><div class="h1 mb-0">{{ user.available_balance }} {{ user.currency }}</div></div></div>
+  <div class="col-md-6"><div class="card card-body"><div class="subheader">Held for pending operations</div><div class="h1 mb-0">{{ user.held_balance }} {{ user.currency }}</div></div></div>
+</div>
+{% endif %}
+<div class="card">{{ tables.show(rows, columns) }}</div>
+{% include 'partials/pagination.twig' %}
+{% if path == '/wallet' %}
+<div class="card mt-4"><div class="card-header"><h2 class="card-title">Latest 50 deposit requests</h2></div>
+{{ tables.show(deposits, {'id':'UUID', 'client_reference':'Reference', 'amount':'Amount', 'currency':'Currency', 'status':'Status', 'created_at':'Date'}) }}
+</div>
+{% endif %}
+{% endblock %}

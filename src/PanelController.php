@@ -1,0 +1,245 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Namingo\ResellerApi;
+
+use PDO;
+use PDOException;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Slim\Views\Twig;
+use Throwable;
+
+final class PanelController
+{
+    private ?array $user = null;
+    private const SECTIONS = [
+        'resellers' => ['user.create', 'user.password', 'user.status', 'user.role', 'tokens.revoke'],
+        'registries' => ['registry.save', 'registry.status', 'registry.access'],
+        'tlds' => ['tld.save', 'tld.access'],
+        'prices' => ['price.set', 'price.delete'],
+        'deposits' => ['deposit.approve', 'deposit.reject'],
+        'jobs' => ['job.resolve', 'job.mark_unknown'],
+        'ownership' => ['object.assign'],
+    ];
+
+    public function __construct(private readonly PDO $pdo, private readonly Twig $view, private readonly PanelApi $api)
+    {
+    }
+
+    public function handle(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        $path = $request->getUri()->getPath();
+        $method = $request->getMethod();
+        $input = $request->getParsedBody();
+        $input = is_array($input) ? $input : [];
+        $ip = (string) ($request->getServerParams()['REMOTE_ADDR'] ?? 'unknown');
+        $this->user = null;
+        try {
+            if (!in_array($method, ['GET', 'POST'], true)) {
+                throw new ApiException(405, 'method_not_allowed', 'Use GET or POST.');
+            }
+            if ($request->getBody()->getSize() > Config::int('API_MAX_BODY_BYTES', 262144)) {
+                throw new ApiException(413, 'body_too_large', 'The submitted form is too large.');
+            }
+            if ($method === 'POST') {
+                PanelSession::csrf($input['csrf'] ?? null, $request->getHeaderLine('Origin'));
+            }
+            $this->user = PanelSession::user($this->pdo);
+            if ($path === '/login') {
+                if ($this->user !== null) {
+                    return $this->redirect($response, '/');
+                }
+                if ($method === 'POST') {
+                    if (!is_string($input['username'] ?? null) || !is_string($input['password'] ?? null)) {
+                        throw new ApiException(422, 'invalid_login', 'Enter your username and password.');
+                    }
+                    PanelSession::login(Auth::login($this->pdo, $input['username'], $input['password'], $ip));
+                    return $this->redirect($response, '/');
+                }
+                return $this->render($response, 'login.twig', ['title' => 'Sign in']);
+            }
+            if ($this->user === null) {
+                return $this->redirect($response, '/login');
+            }
+            if ($path === '/logout' && $method === 'POST') {
+                Auth::revoke($this->pdo, $this->user['token_id']);
+                PanelSession::clear();
+                return $this->redirect($response, '/login');
+            }
+            if (str_starts_with($path, '/admin/')) {
+                if ((int) $this->user['role'] !== 0) {
+                    throw new ApiException(403, 'admin_required', 'Administrator access is required.');
+                }
+                $section = substr($path, 7);
+                if (!isset(self::SECTIONS[$section])) {
+                    throw new ApiException(404, 'not_found', 'Page was not found.');
+                }
+                if ($method === 'POST') {
+                    $action = $input['action'] ?? null;
+                    if (!in_array($action, self::SECTIONS[$section], true)) {
+                        throw new ApiException(422, 'invalid_action', 'Choose an action offered on this page.');
+                    }
+                    $id = Admin::perform($this->pdo, $this->user['id'], $action, $input, $ip);
+                    $_SESSION['flash'] = 'Saved. Reference: ' . $id;
+                    return $this->redirect($response, $path);
+                }
+                return $this->admin($response, $section, $this->page($request));
+            }
+            if ($path === '/checks' && $method === 'POST') {
+                $registry = $input['registry_id'] ?? null;
+                $key = $input['key'] ?? null;
+                if (!is_string($registry) || !Util::isUuid($registry) || !is_string($key) || !Util::isUuid($key)
+                    || !is_string($input['domains'] ?? null) || strlen($input['domains']) > 15000) {
+                    throw new ApiException(422, 'invalid_check', 'Choose a registry and enter up to 50 ASCII domain names.');
+                }
+                $domains = preg_split('/[\s,]+/', trim($input['domains']), -1, PREG_SPLIT_NO_EMPTY);
+                Access::domains($this->pdo, $registry, $this->user['id'], 'domain.check', ['domains' => $domains]);
+                $job = $this->api->check($_SESSION['api_token'], $registry, $domains, $key);
+                if (!is_string($job['job_uuid'] ?? null) || !Util::isUuid($job['job_uuid'])) {
+                    throw new ApiException(502, 'invalid_check', 'The API did not return a check reference.');
+                }
+                return $this->redirect($response, '/checks/' . $job['job_uuid']);
+            }
+            if ($method !== 'GET') {
+                throw new ApiException(405, 'method_not_allowed', 'This page is read-only.');
+            }
+            if (preg_match('#^/checks/([a-f0-9-]{36})$#D', $path, $matches)) {
+                $job = $this->api->job($_SESSION['api_token'], $matches[1]);
+                return $this->render($response, 'check.twig', ['title' => 'Availability result', 'job' => $job,
+                    'result' => json_encode($job['result'] ?? null, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
+            }
+            return $this->reseller($response, $path, $this->page($request));
+        } catch (ApiException $e) {
+            return $this->render($response->withStatus($e->httpStatus), $path === '/login' ? 'login.twig' : 'error.twig',
+                ['title' => $path === '/login' ? 'Sign in' : 'Request could not be completed', 'error' => $e->getMessage()]);
+        } catch (PDOException $e) {
+            error_log('panel.database_error sqlstate=' . $e->getCode());
+            return $this->render($response->withStatus(409), 'error.twig', ['title' => 'Change could not be saved',
+                'error' => 'The record conflicts with existing data, references an unavailable record, or the database is temporarily unavailable.']);
+        } catch (\JsonException) {
+            return $this->render($response->withStatus(422), 'error.twig', ['title' => 'Invalid JSON', 'error' => 'Enter a valid registry configuration object.']);
+        } catch (\RuntimeException $e) {
+            // Registry/config validation messages contain field names, never stored registry secrets.
+            if (str_starts_with($path, '/admin/')) {
+                return $this->render($response->withStatus(422), 'error.twig', ['title' => 'Invalid configuration', 'error' => $e->getMessage()]);
+            }
+            error_log('panel.request_failed type=' . get_class($e));
+            return $this->render($response->withStatus(503), 'error.twig', ['title' => 'Service unavailable', 'error' => 'The request could not be completed.']);
+        } catch (Throwable $e) {
+            error_log('panel.request_failed type=' . get_class($e));
+            return $this->render($response->withStatus(503), 'error.twig', ['title' => 'Service unavailable', 'error' => 'The request could not be completed.']);
+        }
+    }
+
+    private function reseller(ResponseInterface $response, string $path, int $page): ResponseInterface
+    {
+        $id = $this->user['id'];
+        $offset = ($page - 1) * 50;
+        $data = ['page' => $page, 'path' => $path];
+        switch ($path) {
+            case '/':
+                $data += ['title' => 'Dashboard', 'jobs' => PanelData::rows($this->pdo,
+                    'SELECT id, command, status, price, currency, created_at FROM epp_jobs WHERE reseller_id = ? ORDER BY created_at DESC LIMIT 10', [$id]),
+                    'counts' => PanelData::rows($this->pdo, 'SELECT object_type, COUNT(*) AS total FROM object_ownership WHERE reseller_id = ? AND active = 1 GROUP BY object_type', [$id])];
+                return $this->render($response, 'dashboard.twig', $data);
+            case '/account':
+                $data += ['title' => 'Account', 'rows' => PanelData::rows($this->pdo, 'SELECT id, username, role, status, currency, created_at FROM resellers WHERE id = ?', [$id]),
+                    'columns' => ['id' => 'Reseller UUID', 'username' => 'Username', 'role' => 'Role (0 = admin)', 'status' => 'Status', 'currency' => 'Currency', 'created_at' => 'Created']];
+                break;
+            case '/access':
+                $data += ['title' => 'Registry and TLD access', 'rows' => PanelData::access($this->pdo, $id),
+                    'columns' => ['registry' => 'Registry', 'registry_id' => 'UUID', 'profile' => 'Profile', 'registry_enabled' => 'Registry enabled', 'access_enabled' => 'Access enabled',
+                        'tld' => 'TLD', 'tld_enabled' => 'TLD enabled', 'permitted' => 'TLD permitted']];
+                break;
+            case '/prices':
+                $data += ['title' => 'Your prices', 'rows' => PanelData::prices($this->pdo, $id),
+                    'note' => 'Total prices for each term. Term 0 is per operation. A blank TLD covers non-term operations across the registry. The longest matching zone takes priority, then your override. Missing prices block submission.',
+                    'columns' => ['registry' => 'Registry', 'command' => 'Operation', 'tld' => 'TLD', 'period' => 'Years / 0 per operation', 'amount' => 'Total', 'currency' => 'Currency', 'scope' => 'Source']];
+                break;
+            case '/wallet':
+                $data += ['title' => 'Wallet and ledger', 'rows' => PanelData::rows($this->pdo,
+                    "SELECT kind, available_delta, held_delta, available_after, held_after, currency, description, created_at FROM ledger_entries WHERE reseller_id = ? ORDER BY created_at DESC, id DESC LIMIT 51 OFFSET {$offset}", [$id]),
+                    'columns' => ['kind' => 'Type', 'available_delta' => 'Available change', 'held_delta' => 'Held change', 'available_after' => 'Available after', 'held_after' => 'Held after', 'currency' => 'Currency', 'description' => 'Description', 'created_at' => 'Date'],
+                    'deposits' => PanelData::rows($this->pdo, 'SELECT id, client_reference, amount, currency, status, created_at FROM deposit_requests WHERE reseller_id = ? ORDER BY created_at DESC LIMIT 50', [$id]), 'paginate' => true];
+                break;
+            case '/domains':
+                $data += ['title' => 'Your domains, contacts and hosts', 'rows' => PanelData::rows($this->pdo,
+                    "SELECT o.object_type, o.object_name, r.name AS registry, o.active, o.job_id FROM object_ownership o JOIN registries r ON r.id = o.registry_id WHERE o.reseller_id = ? ORDER BY o.object_type, o.object_name LIMIT 51 OFFSET {$offset}", [$id]),
+                    'columns' => ['object_type' => 'Type', 'object_name' => 'Object', 'registry' => 'Registry', 'active' => 'Active', 'job_id' => 'Pending job'], 'paginate' => true];
+                break;
+            case '/checks':
+                return $this->render($response, 'checks.twig', $data + ['title' => 'Domain availability', 'key' => Util::uuid(),
+                    'access' => PanelData::access($this->pdo, $id), 'prices' => array_values(array_filter(PanelData::prices($this->pdo, $id), fn ($p) => $p['command'] === 'domain.check')),
+                    'jobs' => PanelData::rows($this->pdo, "SELECT id AS check_id, status, price, currency, created_at FROM epp_jobs WHERE reseller_id = ? AND command = 'domain.check' ORDER BY created_at DESC LIMIT 50", [$id])]);
+            default:
+                throw new ApiException(404, 'not_found', 'Page was not found.');
+        }
+        return $this->render($response, 'table.twig', $this->pagination($data));
+    }
+
+    private function admin(ResponseInterface $response, string $section, int $page): ResponseInterface
+    {
+        $offset = ($page - 1) * 50;
+        [$sql, $columns] = match ($section) {
+            'resellers' => ['SELECT r.id, r.username, r.role, r.status, r.currency, w.available_balance, w.held_balance FROM resellers r JOIN wallets w ON w.reseller_id = r.id ORDER BY r.username',
+                ['id' => 'UUID', 'username' => 'Username', 'role' => 'Role', 'status' => 'Status', 'currency' => 'Currency', 'available_balance' => 'Available', 'held_balance' => 'Held']],
+            'registries' => ['SELECT id, name, profile, enabled FROM registries ORDER BY name', ['id' => 'UUID', 'name' => 'Registry', 'profile' => 'Profile', 'enabled' => 'Enabled']],
+            'tlds' => ['SELECT t.registry_id, r.name AS registry, t.tld, t.enabled FROM registry_tlds t JOIN registries r ON r.id = t.registry_id ORDER BY r.name, t.tld',
+                ['registry_id' => 'Registry UUID', 'registry' => 'Registry', 'tld' => 'TLD', 'enabled' => 'Enabled']],
+            'prices' => ["SELECT registry_id, CASE WHEN reseller_id = '" . CommandCatalog::GLOBAL_PRICE_UUID . "' THEN 'global' ELSE reseller_id END AS scope, command, tld, period, amount, currency FROM registry_prices ORDER BY registry_id, tld, command, period",
+                ['registry_id' => 'Registry UUID', 'scope' => 'Scope', 'command' => 'Command', 'tld' => 'TLD', 'period' => 'Term', 'amount' => 'Total', 'currency' => 'Currency']],
+            'deposits' => ['SELECT d.id, r.username, d.amount, d.currency, d.status, d.client_reference, d.created_at FROM deposit_requests d JOIN resellers r ON r.id = d.reseller_id ORDER BY d.created_at DESC',
+                ['id' => 'UUID', 'username' => 'Reseller', 'amount' => 'Amount', 'currency' => 'Currency', 'status' => 'Status', 'client_reference' => 'Reference', 'created_at' => 'Date']],
+            'jobs' => ['SELECT j.id, r.username, j.command, j.status, j.price, j.currency, j.created_at FROM epp_jobs j JOIN resellers r ON r.id = j.reseller_id ORDER BY j.created_at DESC',
+                ['id' => 'UUID', 'username' => 'Reseller', 'command' => 'Command', 'status' => 'Status', 'price' => 'Price', 'currency' => 'Currency', 'created_at' => 'Date']],
+            'ownership' => ['SELECT registry_id, reseller_id, object_type, object_name, active, job_id FROM object_ownership ORDER BY registry_id, object_type, object_name',
+                ['registry_id' => 'Registry UUID', 'reseller_id' => 'Reseller UUID', 'object_type' => 'Type', 'object_name' => 'Object', 'active' => 'Active', 'job_id' => 'Pending job']],
+        };
+        $data = ['title' => 'Manage ' . $section, 'section' => $section, 'page' => $page, 'path' => '/admin/' . $section,
+            'rows' => PanelData::rows($this->pdo, $sql . " LIMIT 51 OFFSET {$offset}"), 'columns' => $columns, 'paginate' => true,
+            'resellers' => PanelData::rows($this->pdo, 'SELECT id, username FROM resellers ORDER BY username LIMIT 500'),
+            'registries' => PanelData::rows($this->pdo, 'SELECT id, name FROM registries ORDER BY name LIMIT 500'),
+            'profiles' => CommandCatalog::profiles(), 'commands' => array_column(CommandCatalog::all(), 'command')];
+        if ($section === 'registries') {
+            $data['grants'] = PanelData::rows($this->pdo, 'SELECT u.username, r.name AS registry, rr.enabled
+                FROM reseller_registries rr JOIN resellers u ON u.id = rr.reseller_id JOIN registries r ON r.id = rr.registry_id
+                ORDER BY rr.created_at DESC LIMIT 100');
+            $data['grant_columns'] = ['username' => 'Reseller', 'registry' => 'Registry', 'enabled' => 'Permitted'];
+        } elseif ($section === 'tlds') {
+            $data['grants'] = PanelData::rows($this->pdo, 'SELECT u.username, r.name AS registry, rt.tld, rt.enabled
+                FROM reseller_tlds rt JOIN resellers u ON u.id = rt.reseller_id JOIN registries r ON r.id = rt.registry_id
+                ORDER BY u.username, r.name, rt.tld LIMIT 100');
+            $data['grant_columns'] = ['username' => 'Reseller', 'registry' => 'Registry', 'tld' => 'TLD', 'enabled' => 'Permitted'];
+        }
+        return $this->render($response, 'admin.twig', $this->pagination($data));
+    }
+
+    private function pagination(array $data): array
+    {
+        $data['next'] = ($data['paginate'] ?? false) && count($data['rows']) > 50;
+        if ($data['next']) {
+            array_pop($data['rows']);
+        }
+        return $data;
+    }
+
+    private function page(ServerRequestInterface $request): int
+    {
+        $value = $request->getQueryParams()['page'] ?? '1';
+        return is_scalar($value) ? min(10000, max(1, (int) $value)) : 1;
+    }
+
+    private function render(ResponseInterface $response, string $template, array $data): ResponseInterface
+    {
+        $flash = $_SESSION['flash'] ?? null;
+        unset($_SESSION['flash']);
+        return $this->view->render($response, $template, $data + ['user' => $this->user, 'csrf' => $_SESSION['csrf'] ?? '', 'flash' => $flash]);
+    }
+
+    private function redirect(ResponseInterface $response, string $path): ResponseInterface
+    {
+        return $response->withHeader('Location', $path)->withStatus(303);
+    }
+}

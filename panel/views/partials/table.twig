@@ -1,0 +1,7 @@
+{% macro show(rows, columns) %}
+<div class="table-responsive"><table class="table table-vcenter card-table">
+<thead><tr>{% for label in columns %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
+<tbody>{% for row in rows %}<tr>{% for key, label in columns %}<td>{% if key == 'check_id' %}<a class="uuid" href="/checks/{{ row[key] }}">{{ row[key] }}</a>{% else %}{{ attribute(row, key) is null ? '—' : attribute(row, key) }}{% endif %}</td>{% endfor %}</tr>
+{% else %}<tr><td colspan="{{ columns|length }}" class="text-secondary text-center py-4">No records to display.</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endmacro %}

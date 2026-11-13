@@ -337,6 +337,16 @@ final class Auth
 {
     public static function login(PDO $pdo, string $username, string $password, string $ip): array
     {
+        // Shared, persistent limit for API and PHP-FPM panel logins; never trust forwarding headers here.
+        $limit = $pdo->prepare('INSERT INTO auth_login_limits (ip_hash) VALUES (?)
+            ON DUPLICATE KEY UPDATE attempts = IF(window_started < UTC_TIMESTAMP(6) - INTERVAL 1 MINUTE, 1, LEAST(attempts + 1, 1000000)),
+                window_started = IF(window_started < UTC_TIMESTAMP(6) - INTERVAL 1 MINUTE, UTC_TIMESTAMP(6), window_started)');
+        $limit->execute([Crypto::hmac($ip)]);
+        $attempts = $pdo->prepare('SELECT attempts FROM auth_login_limits WHERE ip_hash = ?');
+        $attempts->execute([Crypto::hmac($ip)]);
+        if ((int) $attempts->fetchColumn() > Config::int('API_LOGIN_LIMIT_PER_MINUTE', 10)) {
+            throw new ApiException(429, 'rate_limited', 'Too many login attempts. Please wait a minute.');
+        }
         if (preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/D', $username) !== 1 || strlen($password) > 1024) {
             throw new ApiException(401, 'invalid_credentials', 'Invalid username or password.');
         }
@@ -410,7 +420,7 @@ final class Auth
             throw new ApiException(401, 'unauthorized', 'A valid bearer token is required.');
         }
         $stmt = $pdo->prepare(
-            "SELECT t.id AS token_id, r.id, r.username, r.currency, w.available_balance, w.held_balance
+            "SELECT t.id AS token_id, r.id, r.username, r.role, r.currency, w.available_balance, w.held_balance
              FROM auth_tokens t
              JOIN resellers r ON r.id = t.reseller_id
              JOIN wallets w ON w.reseller_id = r.id
@@ -763,6 +773,7 @@ final class Ledger
             }
 
             CommandCatalog::validateParams($command, $params);
+            Access::domains($pdo, $registryId, $resellerId, $command, $params);
             $jobId = Util::uuid();
             Ownership::authorize($pdo, $registryId, $resellerId, $command, $params, $profile, $jobId, true);
 
