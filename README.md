@@ -422,6 +422,9 @@ prices, registry/TLD permissions and owned objects. Availability checks submit o
 `domain.check` through the API with the current reseller's token; results are read
 through the API too. They use the configured check price (including explicit zero),
 with an idempotency key per form submission. Refreshing a result only polls that job.
+The Wallet page also submits deposit requests through the API in the wallet currency.
+Keep the same request/payment reference when retrying; funds are credited only after
+administrator approval following independent verification of payment.
 There is no domain registration or public account-registration route. The panel offers
 scoped restoration, restore-report and transfer query/cancellation follow-ups for existing lifecycle work.
 
@@ -433,6 +436,10 @@ registry and TLD access, prices, deposit decisions, unknown-job reconciliation a
 verified ownership imports. Financial and registry reconciliation require the operator
 to independently verify the outcome, as with the CLI. Registry credentials cannot be
 viewed back in the panel. Use one registry UUID per upstream account as before.
+The admin job table links to each reseller's job details, including registry response,
+EPP code, timestamps and latest error. Pending/unknown jobs offer the existing verified
+resolution controls with the selected job reference filled in. Resellers cannot access
+these cross-account investigation pages.
 
 ### Install or upgrade
 

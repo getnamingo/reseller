@@ -7,6 +7,12 @@
   <div class="col-md-6"><div class="card card-body"><div class="subheader">Available balance</div><div class="h1 mb-0">{{ user.available_balance }} {{ user.currency }}</div></div></div>
   <div class="col-md-6"><div class="card card-body"><div class="subheader">Held for pending operations</div><div class="h1 mb-0">{{ user.held_balance }} {{ user.currency }}</div></div></div>
 </div>
+<div class="card card-body mb-4"><h2 class="card-title">Request a deposit</h2>
+<p class="text-secondary">Submit a request after arranging payment with your administrator. Your wallet is credited only after receipt of funds is verified and approved. Reuse the same reference if you retry this request.</p>
+<form method="post" action="/wallet/deposits"><input type="hidden" name="csrf" value="{{ csrf }}">
+<label class="form-label mb-3">Amount ({{ user.currency }})<input class="form-control" name="amount" type="number" min="0.0001" step="0.0001" required></label>
+<label class="form-label mb-3">Request / payment reference<input class="form-control" name="reference" value="{{ deposit_reference }}" minlength="8" maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._:\-]{7,127}" required></label>
+<button class="btn btn-primary">Request deposit</button></form></div>
 {% endif %}
 <div class="card">{{ tables.show(rows, columns, csrf) }}</div>
 {% include 'partials/pagination.twig' %}

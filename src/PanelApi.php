@@ -51,6 +51,12 @@ final class PanelApi
         return $this->call('GET', 'v1/jobs/' . $id, $token);
     }
 
+    public function deposit(string $token, string $amount, string $currency, string $reference): array
+    {
+        return $this->call('POST', 'v1/deposits', $token, ['json' => [
+            'amount' => $amount, 'currency' => $currency, 'reference' => $reference]]);
+    }
+
     public function schedule(string $token, string $id): array
     {
         if (!Util::isUuid($id)) { throw new ApiException(404, 'job_not_found', 'Job was not found.'); }
@@ -80,7 +86,7 @@ final class PanelApi
             }
             $body = json_decode($raw, true, 64, JSON_THROW_ON_ERROR);
         } catch (Throwable) {
-            throw new ApiException(502, 'api_unavailable', 'Availability service is unavailable. Check recent jobs before retrying a submitted check.');
+            throw new ApiException(502, 'api_unavailable', 'The API is unavailable. Check job or deposit history before retrying with the same reference.');
         }
         if ($response->getStatusCode() >= 400) {
             throw new ApiException($response->getStatusCode(), 'api_error',

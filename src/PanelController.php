@@ -72,6 +72,12 @@ final class PanelController
                 if ((int) $this->user['role'] !== 0) {
                     throw new ApiException(403, 'admin_required', 'Administrator access is required.');
                 }
+                if ($method === 'GET' && preg_match('#^/admin/jobs/([a-f0-9-]{36})$#D', $path, $match)) {
+                    $job = Ledger::fetchJob($this->pdo, $match[1]);
+                    $owner = PanelData::rows($this->pdo, 'SELECT r.id, r.username FROM resellers r JOIN epp_jobs j ON j.reseller_id = r.id WHERE j.id = ?', [$match[1]])[0];
+                    return $this->render($response, 'job.twig', ['title' => 'Investigate job', 'job' => $job, 'admin_job' => true, 'owner' => $owner,
+                        'result' => json_encode($job['result'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
+                }
                 $section = substr($path, 7);
                 if (!isset(self::SECTIONS[$section])) {
                     throw new ApiException(404, 'not_found', 'Page was not found.');
@@ -86,6 +92,19 @@ final class PanelController
                     return $this->redirect($response, $path);
                 }
                 return $this->admin($response, $section, $this->page($request));
+            }
+            if ($path === '/wallet/deposits' && $method === 'POST') {
+                $amount = Util::money($input['amount'] ?? null);
+                $reference = $input['reference'] ?? null;
+                if (!is_string($reference) || preg_match('/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/D', $reference) !== 1) {
+                    throw new ApiException(422, 'invalid_reference', 'Deposit reference must contain 8-128 safe ASCII characters.');
+                }
+                $deposit = $this->api->deposit($_SESSION['api_token'], $amount, $this->user['currency'], $reference);
+                if (!is_string($deposit['deposit_uuid'] ?? null) || !Util::isUuid($deposit['deposit_uuid'])) {
+                    throw new ApiException(502, 'invalid_deposit', 'The API did not return a deposit reference. Check deposit history before retrying with the same reference.');
+                }
+                $_SESSION['flash'] = 'Deposit request recorded. Reference: ' . $deposit['deposit_uuid'] . '. Funds are credited only after administrator approval.';
+                return $this->redirect($response, '/wallet');
             }
             if ($method === 'POST' && preg_match('#^/jobs/([a-f0-9-]{36})/reconcile$#D', $path, $match)) {
                 $this->api->schedule($_SESSION['api_token'], $match[1]);
@@ -199,7 +218,7 @@ final class PanelController
                 $data += ['title' => 'Wallet and ledger', 'rows' => PanelData::rows($this->pdo,
                     "SELECT kind, available_delta, held_delta, available_after, held_after, currency, description, created_at FROM ledger_entries WHERE reseller_id = ? ORDER BY created_at DESC, id DESC LIMIT 51 OFFSET {$offset}", [$id]),
                     'columns' => ['kind' => 'Type', 'available_delta' => 'Available change', 'held_delta' => 'Held change', 'available_after' => 'Available after', 'held_after' => 'Held after', 'currency' => 'Currency', 'description' => 'Description', 'created_at' => 'Date'],
-                    'deposits' => PanelData::rows($this->pdo, 'SELECT id, client_reference, amount, currency, status, created_at FROM deposit_requests WHERE reseller_id = ? ORDER BY created_at DESC LIMIT 50', [$id]), 'paginate' => true];
+                    'deposits' => PanelData::rows($this->pdo, 'SELECT id, client_reference, amount, currency, status, created_at FROM deposit_requests WHERE reseller_id = ? ORDER BY created_at DESC LIMIT 50', [$id]), 'deposit_reference' => Util::uuid(), 'paginate' => true];
                 break;
             case '/domains':
                 $data += ['title' => 'Your domains, contacts and hosts', 'rows' => PanelData::rows($this->pdo,
@@ -231,8 +250,8 @@ final class PanelController
                 ['registry_id' => 'Registry UUID', 'scope' => 'Scope', 'command' => 'Command', 'tld' => 'TLD', 'period' => 'Term', 'amount' => 'Total', 'currency' => 'Currency']],
             'deposits' => ['SELECT d.id, r.username, d.amount, d.currency, d.status, d.client_reference, d.created_at FROM deposit_requests d JOIN resellers r ON r.id = d.reseller_id ORDER BY d.created_at DESC',
                 ['id' => 'UUID', 'username' => 'Reseller', 'amount' => 'Amount', 'currency' => 'Currency', 'status' => 'Status', 'client_reference' => 'Reference', 'created_at' => 'Date']],
-            'jobs' => ['SELECT j.id, r.username, j.command, j.status, j.price, j.currency, j.created_at FROM epp_jobs j JOIN resellers r ON r.id = j.reseller_id ORDER BY j.created_at DESC',
-                ['id' => 'UUID', 'username' => 'Reseller', 'command' => 'Command', 'status' => 'Status', 'price' => 'Price', 'currency' => 'Currency', 'created_at' => 'Date']],
+            'jobs' => ['SELECT j.id AS admin_job_id, r.username, j.command, j.status, j.price, j.currency, j.created_at FROM epp_jobs j JOIN resellers r ON r.id = j.reseller_id ORDER BY j.created_at DESC',
+                ['admin_job_id' => 'UUID / details', 'username' => 'Reseller', 'command' => 'Command', 'status' => 'Status', 'price' => 'Price', 'currency' => 'Currency', 'created_at' => 'Date']],
             'ownership' => ['SELECT registry_id, reseller_id, object_type, object_name, active, domain_state, job_id FROM object_ownership ORDER BY registry_id, object_type, object_name',
                 ['registry_id' => 'Registry UUID', 'reseller_id' => 'Reseller UUID', 'object_type' => 'Type', 'object_name' => 'Object', 'active' => 'Ownership confirmed', 'domain_state' => 'Domain state', 'job_id' => 'Pending job']],
         };
