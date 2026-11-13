@@ -90,6 +90,7 @@ final class EppWorker
                 $parentRow = $parent->fetch();
                 if ($parentRow !== false) { $request['params'] = array_replace(Ownership::params($parentRow), $request['params']); }
             }
+            CommandCatalog::validateParams($job['command'], $request['params'], $profile);
             Access::domains($pdo, $job['registry_id'], $job['reseller_id'], $job['command'], $request['params']);
             Ownership::authorize($pdo, $job['registry_id'], $job['reseller_id'], $job['command'],
                 $request['params'], $profile, $jobId);
@@ -118,6 +119,9 @@ final class EppWorker
         } catch (RegistryLoginException $e) {
             $result = ['error' => 'registry_login_failed', 'message' => $e->getMessage()];
             $status = 'rejected';
+        } catch (ApiException $e) {
+            $result = ['error' => $e->errorCode, 'message' => $e->getMessage()];
+            $status = $commandAttempted && CommandCatalog::isMutating($job['command'], $request['params'] ?? []) ? 'unknown' : 'rejected';
         } catch (Throwable $e) {
             $message = self::safeException($e);
             $result = ['error' => $commandAttempted ? 'registry_command_failed' : 'registry_connection_failed', 'message' => $message];

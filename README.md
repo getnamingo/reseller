@@ -321,6 +321,20 @@ Content-Type: application/json
 
 A completed call returns its job. A slow call returns HTTP `202`; poll `GET /v1/jobs/JOB_UUID`. A registry rejection is a completed HTTP response with `status: rejected`. Only API validation and transport-level API errors use an HTTP error response.
 
+Command submission validates the selected profile's local serializer requirements before
+committing a job, hold or ownership reservation. Missing fields return HTTP `422` with
+the parameter name; for example, generic registration requires `authInfoPw` as well as
+`domainname` and `period`. Profile-specific contact fields, transfer operation/fields,
+DNSSEC record fields and parameter types are checked too. Optional contact address
+fields read unconditionally by the client must be supplied as strings (empty when
+appropriate). Profiles with unimplemented methods reject the command before queueing.
+The local contracts are in `src/ProfileParams.php` and track the pinned client version;
+the registry still validates its own policies and extensions. Check these contracts when
+upgrading the client. Existing queued jobs are revalidated before connection: local
+validation failures reject the job and release its reservation, while uncertain writes
+continue to require reconciliation. Linked transfer follow-ups inherit required original
+parameters server-side, so the panel need not expose the request's authInfo.
+
 Other endpoints:
 
 - `GET /v1/jobs`, `GET /v1/prices`, and `GET /v1/domains` (paginated; see self-service below)
@@ -400,6 +414,10 @@ removes only its own randomly named database, and sends no EPP commands.
 TEST_MYSQL_DSN='mysql:host=127.0.0.1;port=3306' \
 TEST_MYSQL_USER=root TEST_MYSQL_PASSWORD=secret php tests/isolation_pricing.php
 ```
+
+Run `tests/validation.php` with the same settings for profile parameter validation,
+zero-write reproduction of the missing-authInfo failure, submission rollback and
+worker rejection/release of invalid jobs queued by an older version.
 
 The suite covers ownership and contact references, concurrent create reservations,
 unknown/rejected/deleted objects, idempotency, FRED/LT identifiers, pricing by zone and

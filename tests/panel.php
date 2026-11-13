@@ -295,7 +295,7 @@ try {
     denied('rate_limited', fn () => Auth::login($pdo, 'reseller-a', 'replacement long password', '192.0.2.4'));
 
     // A permission revoked after enqueue must stop the worker before any EPP connection.
-    $job = Ledger::createJob($pdo, $a, $registry, 'domain.create', Util::uuid(), ['domainname' => 'queued.com', 'period' => 1]);
+    $job = Ledger::createJob($pdo, $a, $registry, 'domain.create', Util::uuid(), ['domainname' => 'queued.com', 'period' => 1, 'authInfoPw' => 'test-secret']);
     action('tld.access', ['registry_id' => $registry, 'reseller_id' => $a, 'tld' => 'com', 'enabled' => '0']);
     (new ReflectionProperty(Db::class, 'pdo'))->setValue(null, $pdo);
     $processed = EppWorker::process($job['job_id']);

@@ -554,7 +554,7 @@ final class CommandCatalog
         return $out;
     }
 
-    public static function validateParams(string $command, array $params): void
+    public static function validateParams(string $command, array $params, ?string $profile = null): void
     {
         self::method($command);
         if ($params !== [] && array_is_list($params)) {
@@ -567,6 +567,7 @@ final class CommandCatalog
         }
         self::validateNode($params, 0);
         if ($command === 'domain.restore_report') { Rgp::validate($params); }
+        if ($profile !== null) { ProfileParams::validate(self::normalizeProfile($profile), $command, $params); }
     }
 
     public static function priceKey(string $command, array $params): array
@@ -817,6 +818,13 @@ final class Ledger
             Access::domains($pdo, $registryId, $resellerId, $command, $params);
             $jobId = Util::uuid();
             $parentJob = Ownership::authorize($pdo, $registryId, $resellerId, $command, $params, $profile, $jobId, true);
+            $effective = $params;
+            if ($parentJob !== null && $command === 'domain.transfer') {
+                $parent = $pdo->prepare('SELECT * FROM epp_jobs WHERE id = ? AND reseller_id = ? AND registry_id = ?');
+                $parent->execute([$parentJob, $resellerId, $registryId]);
+                $effective = array_replace(Ownership::params($parent->fetch()), $params);
+            }
+            CommandCatalog::validateParams($command, $effective, $profile);
 
             $walletStmt = $pdo->prepare('SELECT * FROM wallets WHERE reseller_id = ? FOR UPDATE');
             $walletStmt->execute([$resellerId]);
