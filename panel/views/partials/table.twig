@@ -1,7 +1,7 @@
-{% macro show(rows, columns) %}
+{% macro show(rows, columns, csrf = '') %}
 <div class="table-responsive"><table class="table table-vcenter card-table">
 <thead><tr>{% for label in columns %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
-<tbody>{% for row in rows %}<tr>{% for key, label in columns %}<td>{% if key == 'check_id' %}<a class="uuid" href="/checks/{{ row[key] }}">{{ row[key] }}</a>{% else %}{{ attribute(row, key) is null ? '—' : attribute(row, key) }}{% endif %}</td>{% endfor %}</tr>
+<tbody>{% for row in rows %}<tr>{% for key, label in columns %}<td>{% if key == 'restore_key' %}{% if row.object_type == 'domain' and row.domain_state == 'deleted' and not row.job_id %}<form method="post" action="/lifecycle"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="key" value="{{ row.restore_key }}"><input type="hidden" name="command" value="domain.restore"><input type="hidden" name="registry_id" value="{{ row.registry_id }}"><input type="hidden" name="domainname" value="{{ row.object_name }}"><button class="btn btn-sm btn-outline-primary">Restore at configured price</button></form>{% else %}—{% endif %}{% elseif key == 'check_id' %}<a class="uuid" href="/checks/{{ row[key] }}">{{ row[key] }}</a>{% else %}{{ attribute(row, key) is null ? '—' : attribute(row, key) }}{% endif %}</td>{% endfor %}</tr>
 {% else %}<tr><td colspan="{{ columns|length }}" class="text-secondary text-center py-4">No records to display.</td></tr>{% endfor %}</tbody>
 </table></div>
 {% endmacro %}

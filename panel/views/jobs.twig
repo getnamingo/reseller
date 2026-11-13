@@ -9,7 +9,7 @@
 <div class="card"><div class="table-responsive"><table class="table table-vcenter card-table">
 <thead><tr><th>Job UUID</th><th>Registry</th><th>Command</th><th>Status</th><th>Price</th><th>Created</th><th>Finished</th><th>EPP code</th></tr></thead>
 <tbody>{% for job in rows %}<tr>
-<td class="uuid">{% if job.command == 'domain.check' %}<a href="/checks/{{ job.job_uuid }}">{{ job.job_uuid }}</a>{% else %}{{ job.job_uuid }}{% endif %}</td>
+<td class="uuid"><a href="/jobs/{{ job.job_uuid }}">{{ job.job_uuid }}</a></td>
 <td>{{ job.registry_name }}</td><td>{{ job.command }}</td><td>{{ job.status }}</td><td>{{ job.price }} {{ job.currency }}</td><td>{{ job.created_at }}</td><td>{{ job.finished_at ?? '—' }}</td><td>{{ job.epp_code ?? '—' }}</td>
 </tr>{% else %}<tr><td colspan="8" class="text-center text-secondary py-4">No jobs match these filters.</td></tr>{% endfor %}</tbody>
 </table></div></div>

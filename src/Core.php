@@ -462,6 +462,7 @@ final class CommandCatalog
         'domain.info' => 'domainInfo',
         'domain.renew' => 'domainRenew',
         'domain.restore' => 'domainRestore',
+        'domain.restore_report' => 'domainReport',
         'domain.transfer' => 'domainTransfer',
         'domain.update_authinfo' => 'domainUpdateAuthinfo',
         'domain.update_contact' => 'domainUpdateContact',
@@ -479,7 +480,7 @@ final class CommandCatalog
     private const MUTATING = [
         'contact.create', 'contact.delete', 'contact.update', 'contact.update_authinfo',
         'domain.create', 'domain.create_dnssec', 'domain.delete', 'domain.renew', 'domain.restore',
-        'domain.transfer', 'domain.update_authinfo', 'domain.update_contact', 'domain.update_dnssec',
+        'domain.restore_report', 'domain.transfer', 'domain.update_authinfo', 'domain.update_contact', 'domain.update_dnssec',
         'domain.update_ns', 'domain.update_status', 'host.create', 'host.delete', 'host.update',
     ];
 
@@ -495,6 +496,7 @@ final class CommandCatalog
         'domain.info' => ['domainname'],
         'domain.renew' => ['domainname', 'regperiod'],
         'domain.restore' => ['domainname'],
+        'domain.restore_report' => ['domainname', 'pre_data', 'post_data', 'deleted_at', 'restored_at', 'reason', 'statements'],
         'domain.transfer' => ['domainname'],
         'domain.update_authinfo' => ['domainname', 'authInfo'],
         'domain.update_contact' => ['domainname'],
@@ -518,10 +520,10 @@ final class CommandCatalog
             ?? throw new ApiException(404, 'unsupported_command', 'The requested EPP command is not exposed.');
     }
 
-    public static function isMutating(string $command): bool
+    public static function isMutating(string $command, array $params = []): bool
     {
         self::method($command);
-        return in_array($command, self::MUTATING, true);
+        return !($command === 'domain.transfer' && ($params['op'] ?? '') === 'query') && in_array($command, self::MUTATING, true);
     }
 
     public static function normalizeProfile(string $profile): string
@@ -564,6 +566,7 @@ final class CommandCatalog
             }
         }
         self::validateNode($params, 0);
+        if ($command === 'domain.restore_report') { Rgp::validate($params); }
     }
 
     public static function priceKey(string $command, array $params): array
@@ -621,11 +624,15 @@ final class Ownership
     }
 
     public static function authorize(PDO $pdo, string $registry, string $reseller, string $command,
-        array $params, string $profile, string $jobId, bool $reserve = false): void
+        array $params, string $profile, string $jobId, bool $reserve = false): ?string
     {
         if ($command === 'hello' || str_ends_with($command, '.check')) {
-            return;
+            return null;
         }
+        if ($command === 'domain.restore_report' && !Rgp::supported($profile)) {
+            throw new ApiException(422, 'unsupported_report_profile', 'Validated restore reports currently support generic and VRSN profiles.');
+        }
+        $parentJob = null;
         [$type, $action] = explode('.', $command, 2);
         $generated = $profile === 'LT' && $command === 'contact.create';
         $key = match ($type) {
@@ -656,7 +663,27 @@ final class Ownership
             $stmt = $pdo->prepare('SELECT * FROM object_ownership WHERE registry_id = ? AND object_type = ? AND object_name = ? FOR UPDATE');
             $stmt->execute([$registry, $type, $name]);
             $row = $stmt->fetch();
-            if (!$reserve) {
+            $followup = false;
+            if ($row !== false && $row['reseller_id'] === $reseller && $row['job_id'] !== null && $row['job_id'] !== $jobId) {
+                $parent = $pdo->prepare('SELECT * FROM epp_jobs WHERE id = ? AND reseller_id = ? AND registry_id = ?');
+                $parent->execute([$row['job_id'], $reseller, $registry]);
+                $parentRow = $parent->fetch();
+                if ($parentRow !== false) {
+                    $parentRow['owned_active'] = $row['active'];
+                    $followup = Lifecycle::followup($parentRow, $command, $params);
+                    if ($followup) { $parentJob = $parentRow['id']; }
+                }
+            }
+            if (!$reserve && !$followup && $row !== false && $row['reseller_id'] === $reseller && (bool) $row['active']
+                && ($command === 'domain.info' || $command === 'domain.transfer' && ($params['op'] ?? '') === 'query')) {
+                $child = $pdo->prepare('SELECT parent_job_id FROM epp_jobs WHERE id = ? AND reseller_id = ? AND registry_id = ?');
+                $child->execute([$jobId, $reseller, $registry]);
+                $priorParent = $child->fetchColumn();
+                if ($priorParent !== false && $priorParent !== null) { $followup = true; $parentJob = $priorParent; }
+            }
+            if ($followup) {
+                // Follow-up jobs never take over the original reservation or its wallet hold.
+            } elseif (!$reserve) {
                 if ($row === false || $row['reseller_id'] !== $reseller || $row['job_id'] !== $jobId) {
                     throw new ApiException(403, 'object_not_owned', 'Object is unavailable for this reseller.');
                 }
@@ -666,6 +693,10 @@ final class Ownership
             } else {
                 if ($row === false || $row['reseller_id'] !== $reseller) {
                     throw new ApiException(403, 'object_not_owned', 'Object is unavailable for this reseller.');
+                }
+                if ($type === 'domain' && $row['domain_state'] === 'deleted'
+                    && !in_array($command, ['domain.info', 'domain.restore', 'domain.restore_report'], true)) {
+                    throw new ApiException(409, 'domain_deleted', 'Domain is retained for redemption; restore it or wait for confirmed purge.');
                 }
                 if ($row['job_id'] !== null || !(bool) $row['active'] || $create || $transfer) {
                     throw new ApiException(409, 'object_busy', 'Object already exists or requires reconciliation.');
@@ -697,6 +728,7 @@ final class Ownership
                 throw new ApiException(403, 'object_not_owned', 'Parent domain is unavailable for this reseller.');
             }
         }
+        return $parentJob;
     }
 
     private static function requireOwned(PDO $pdo, string $registry, string $reseller, string $type, mixed $name): void
@@ -711,13 +743,22 @@ final class Ownership
 
     public static function finish(PDO $pdo, array $job, string $status, array $result): void
     {
-        if ($status === 'unknown') {
+        if (in_array($status, ['unknown', 'pending'], true)) {
             return; // Keep reservations until the operator verifies the registry outcome.
         }
-        $remove = $status === 'succeeded' && (str_ends_with($job['command'], '.delete')
+        $remove = $status === 'succeeded' && ((str_ends_with($job['command'], '.delete') && $job['command'] !== 'domain.delete')
+            || ($job['command'] === 'domain.delete' && ($result['purged'] ?? false))
             || ($job['command'] === 'domain.transfer' && self::params($job)['op'] === 'approve'));
         $delete = $pdo->prepare('DELETE FROM object_ownership WHERE job_id = ?' . ($remove ? '' : ' AND active = 0 AND ? = 1'));
         $delete->execute($remove ? [$job['id']] : [$job['id'], (int) ($status === 'rejected')]);
+        if ($job['command'] === 'domain.info' && (int) ($result['code'] ?? 0) === 2303) {
+            $pdo->prepare("DELETE FROM object_ownership WHERE job_id = ? AND object_type = 'domain' AND domain_state = 'deleted'")->execute([$job['id']]);
+        }
+        if ($status === 'succeeded' && $job['command'] === 'domain.delete' && !($result['purged'] ?? false)) {
+            $pdo->prepare("UPDATE object_ownership SET domain_state = 'deleted', next_check_at = UTC_TIMESTAMP(6) WHERE job_id = ?")->execute([$job['id']]);
+        } elseif ($status === 'succeeded' && in_array($job['command'], ['domain.restore', 'domain.restore_report'], true)) {
+            $pdo->prepare("UPDATE object_ownership SET domain_state = 'active', next_check_at = NULL WHERE job_id = ?")->execute([$job['id']]);
+        }
         $update = $pdo->prepare('UPDATE object_ownership SET active = 1, job_id = NULL WHERE job_id = ?');
         $update->execute([$job['id']]);
         if ($status === 'succeeded' && $job['command'] === 'contact.create' && isset($result['id'])) {
@@ -775,7 +816,7 @@ final class Ledger
             CommandCatalog::validateParams($command, $params);
             Access::domains($pdo, $registryId, $resellerId, $command, $params);
             $jobId = Util::uuid();
-            Ownership::authorize($pdo, $registryId, $resellerId, $command, $params, $profile, $jobId, true);
+            $parentJob = Ownership::authorize($pdo, $registryId, $resellerId, $command, $params, $profile, $jobId, true);
 
             $walletStmt = $pdo->prepare('SELECT * FROM wallets WHERE reseller_id = ? FOR UPDATE');
             $walletStmt->execute([$resellerId]);
@@ -798,10 +839,10 @@ final class Ledger
             [$nonce, $cipher] = Crypto::encrypt($requestJson, 'job-request:' . $jobId);
             $insert = $pdo->prepare(
                 'INSERT INTO epp_jobs
-                 (id, reseller_id, registry_id, command, idempotency_key, request_hash, request_nonce, request_cipher, price, currency)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                 (id, reseller_id, registry_id, command, idempotency_key, request_hash, request_nonce, request_cipher, price, currency, parent_job_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             );
-            $insert->execute([$jobId, $resellerId, $registryId, $command, $idempotencyKey, $requestHash, $nonce, $cipher, $price, $currency]);
+            $insert->execute([$jobId, $resellerId, $registryId, $command, $idempotencyKey, $requestHash, $nonce, $cipher, $price, $currency, $parentJob]);
 
             if ($price !== '0.0000') {
                 $update = $pdo->prepare(
@@ -838,9 +879,9 @@ final class Ledger
         }
     }
 
-    public static function completeJob(PDO $pdo, string $jobId, string $status, array $result, ?int $eppCode): void
+    public static function completeJob(PDO $pdo, string $jobId, string $status, array $result, ?int $eppCode, bool $reconcile = false): void
     {
-        if (!in_array($status, ['succeeded', 'rejected', 'unknown'], true)) {
+        if (!in_array($status, ['succeeded', 'rejected', 'unknown', 'pending'], true)) {
             throw new RuntimeException('Invalid final job status.');
         }
         $result = Util::normalize($result);
@@ -854,14 +895,14 @@ final class Ledger
             if ($job === false) {
                 throw new RuntimeException('Job not found.');
             }
-            if (in_array($job['status'], ['succeeded', 'rejected', 'unknown'], true)) {
+            if (in_array($job['status'], ['succeeded', 'rejected'], true) || ($job['status'] === 'unknown' && !$reconcile)) {
                 $pdo->commit();
                 return;
             }
 
             Ownership::finish($pdo, $job, $status, $result);
 
-            if ($job['price'] !== '0.0000' && $status !== 'unknown') {
+            if ($job['price'] !== '0.0000' && !in_array($status, ['unknown', 'pending'], true)) {
                 $wallet = $pdo->prepare('SELECT * FROM wallets WHERE reseller_id = ? FOR UPDATE');
                 $wallet->execute([$job['reseller_id']]);
                 if ($wallet->fetch() === false) {
@@ -888,10 +929,11 @@ final class Ledger
             }
 
             $updateJob = $pdo->prepare(
-                'UPDATE epp_jobs SET status = ?, epp_code = ?, response_nonce = ?, response_cipher = ?, finished_at = UTC_TIMESTAMP(6)
+                'UPDATE epp_jobs SET status = ?, epp_code = ?, response_nonce = ?, response_cipher = ?, finished_at = IF(? = \'pending\', NULL, UTC_TIMESTAMP(6)),
+                    dispatch_until = NULL, reconcile_at = IF(? = \'pending\', UTC_TIMESTAMP(6) + INTERVAL 30 SECOND, NULL), last_error = NULL
                  WHERE id = ?'
             );
-            $updateJob->execute([$status, $eppCode, $nonce, $cipher, $jobId]);
+            $updateJob->execute([$status, $eppCode, $nonce, $cipher, $status, $status, $jobId]);
             $pdo->commit();
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {
@@ -924,8 +966,15 @@ final class Ledger
                 JSON_THROW_ON_ERROR,
             );
         }
+        $params = Ownership::params($job);
         return [
             'job_uuid' => $job['id'],
+            'domainname' => $params['domainname'] ?? null,
+            'transfer_op' => $job['command'] === 'domain.transfer' ? ($params['op'] ?? null) : null,
+            'parent_job_uuid' => $job['parent_job_id'],
+            'next_attempt_at' => $job['next_attempt_at'],
+            'reconcile_at' => $job['reconcile_at'],
+            'last_error' => $job['last_error'],
             'registry_uuid' => $job['registry_id'],
             'registry_name' => $job['registry_name'],
             'profile' => $job['profile'],
@@ -951,8 +1000,8 @@ final class Ledger
             $stmt = $pdo->prepare('SELECT * FROM epp_jobs WHERE id = ? FOR UPDATE');
             $stmt->execute([$jobId]);
             $job = $stmt->fetch();
-            if ($job === false || $job['status'] !== 'unknown') {
-                throw new RuntimeException('Only an unknown job can be resolved.');
+            if ($job === false || !in_array($job['status'], ['unknown', 'pending'], true)) {
+                throw new RuntimeException('Only an unknown or pending job can be resolved.');
             }
             if ($job['price'] !== '0.0000') {
                 $wallet = $pdo->prepare('SELECT * FROM wallets WHERE reseller_id = ? FOR UPDATE');

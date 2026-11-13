@@ -45,6 +45,28 @@ final class PanelApi
         return $job;
     }
 
+    public function detail(string $token, string $id): array
+    {
+        if (!Util::isUuid($id)) { throw new ApiException(404, 'job_not_found', 'Job was not found.'); }
+        return $this->call('GET', 'v1/jobs/' . $id, $token);
+    }
+
+    public function schedule(string $token, string $id): array
+    {
+        if (!Util::isUuid($id)) { throw new ApiException(404, 'job_not_found', 'Job was not found.'); }
+        return $this->call('POST', 'v1/jobs/' . $id . '/reconcile', $token);
+    }
+
+    public function lifecycle(string $token, string $registry, string $command, array $params, string $key): array
+    {
+        if (!in_array($command, ['domain.restore', 'domain.restore_report', 'domain.transfer'], true)
+            || ($command === 'domain.transfer' && !in_array($params['op'] ?? '', ['query', 'cancel'], true))) {
+            throw new ApiException(403, 'unsupported_panel_action', 'This lifecycle action is not exposed in the panel.');
+        }
+        return $this->call('POST', 'v1/epp/' . $command, $token, ['headers' => ['Idempotency-Key' => $key],
+            'json' => ['registry_uuid' => $registry, 'params' => $params]]);
+    }
+
     private function call(string $method, string $path, string $token, array $options = []): array
     {
         $options['http_errors'] = false;

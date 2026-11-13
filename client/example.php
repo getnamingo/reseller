@@ -83,7 +83,7 @@ if (!in_array($command, ['contact.check', 'contact.info', 'domain.check', 'domai
 ]);
 
 $job = $reply['data'];
-for ($attempt = 0; in_array($job['status'], ['queued', 'processing'], true) && $attempt < 30; $attempt++) {
+for ($attempt = 0; in_array($job['status'], ['queued', 'processing', 'pending'], true) && $attempt < 30; $attempt++) {
     usleep(1_000_000);
     [$status, $reply] = $call('GET', 'v1/jobs/' . $job['job_uuid'], ['headers' => $auth]);
     $job = $reply['data'];

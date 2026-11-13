@@ -1,0 +1,31 @@
+{% extends 'layouts/app.twig' %}
+{% import 'partials/forms.twig' as forms %}
+{% block content %}
+<div class="card card-body mb-4">
+  <dl class="row"><dt class="col-sm-3">Job UUID</dt><dd class="col-sm-9 uuid">{{ job.job_uuid }}</dd>
+  <dt class="col-sm-3">Operation</dt><dd class="col-sm-9">{{ job.command }} {{ job.transfer_op }}</dd>
+  <dt class="col-sm-3">Domain</dt><dd class="col-sm-9">{{ job.domainname ?? '—' }}</dd>
+  <dt class="col-sm-3">Status</dt><dd class="col-sm-9">{{ job.status }}</dd>
+  <dt class="col-sm-3">Price</dt><dd class="col-sm-9">{{ job.price }} {{ job.currency }}</dd></dl>
+  {% if job.status == 'pending' %}<p class="text-secondary">The registry accepted this operation. Funds remain reserved until a read-only registry observation confirms its outcome. The original command is not retried.</p>{% endif %}
+  {% if job.status == 'unknown' %}<p class="text-secondary">The write outcome is uncertain. Ask your administrator to verify it; automatic processing will not replay this command or release its hold.</p>{% endif %}
+  {% if job.last_error %}<p class="text-secondary">{{ job.last_error }}</p>{% endif %}
+  <div class="d-flex gap-2 flex-wrap"><a class="btn btn-outline-secondary" href="/jobs/{{ job.job_uuid }}">Refresh details</a>
+  {% if job.status in ['queued', 'pending'] %}<form method="post" action="/jobs/{{ job.job_uuid }}/reconcile"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-primary">{{ job.status == 'queued' ? 'Schedule queued job' : 'Check registry outcome' }}</button></form>{% endif %}</div>
+  {% if job.parent_job_uuid %}<a class="mt-3" href="/jobs/{{ job.parent_job_uuid }}">Original lifecycle job</a>{% endif %}
+  <details class="mt-3"><summary>Response details</summary><pre>{{ result }}</pre></details>
+</div>
+{% if job.command == 'domain.transfer' and job.status in ['pending', 'unknown'] %}
+<div class="card card-body mb-4"><h2 class="card-title">Transfer follow-up</h2><p class="text-secondary">Queries and cancellation use their configured per-operation price. See <a href="/prices">your prices</a>.</p>
+<form method="post" action="/lifecycle"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="key" value="{{ key }}"><input type="hidden" name="command" value="domain.transfer"><input type="hidden" name="domainname" value="{{ job.domainname }}"><input type="hidden" name="registry_id" value="{{ job.registry_uuid }}">
+<select class="form-select mb-3" name="op"><option value="query">Query transfer status</option>{% if job.status == 'pending' and job.transfer_op == 'request' %}<option value="cancel">Cancel pending incoming transfer</option>{% endif %}</select><button class="btn btn-outline-primary">Submit follow-up</button></form></div>
+{% endif %}
+{% if job.command == 'domain.restore' and job.status == 'pending' and job.profile in ['generic', 'VRSN'] %}
+<div class="card card-body"><h2 class="card-title">Submit a restore report</h2><p class="text-secondary">For generic/VRSN registries requiring RFC 3915 reports. Use accurate historical registration data, UTC dates and the registrar statements required by your registry. This operation uses its configured report price.</p>
+<form method="post" action="/lifecycle"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="key" value="{{ key }}"><input type="hidden" name="command" value="domain.restore_report"><input type="hidden" name="domainname" value="{{ job.domainname }}"><input type="hidden" name="registry_id" value="{{ job.registry_uuid }}">
+{% for field, label in {'pre_data':'Registration data before deletion', 'post_data':'Registration data after restoration', 'reason':'Reason for restoration', 'statement1':'First registrar statement', 'statement2':'Second registrar statement'} %}<label class="form-label mb-3">{{ label }}<textarea class="form-control" name="{{ field }}" required maxlength="60000"></textarea></label>{% endfor %}
+{{ forms.input('deleted_at', 'Deletion time: YYYY-MM-DDTHH:MM:SSZ') }}{{ forms.input('restored_at', 'Restoration time: YYYY-MM-DDTHH:MM:SSZ') }}
+<label class="form-label mb-3">Other supporting information<textarea class="form-control" name="other" maxlength="60000"></textarea></label>
+<button class="btn btn-primary">Submit report</button></form></div>
+{% endif %}
+{% endblock %}

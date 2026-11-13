@@ -19,8 +19,8 @@ final class EppWorker
 
         $pdo = Db::pdo();
         $claim = $pdo->prepare(
-            "UPDATE epp_jobs SET status = 'processing', started_at = UTC_TIMESTAMP(6)
-             WHERE id = ? AND status = 'queued'"
+            "UPDATE epp_jobs SET status = 'processing', started_at = UTC_TIMESTAMP(6), dispatch_until = NULL
+             WHERE id = ? AND status = 'queued' AND next_attempt_at <= UTC_TIMESTAMP(6)"
         );
         $claim->execute([$jobId]);
         if ($claim->rowCount() !== 1) {
@@ -43,14 +43,10 @@ final class EppWorker
         $eppCode = null;
         $result = ['error' => 'The registry command could not be processed.'];
         $commandAttempted = false;
-        $epp = null;
-        $loggedIn = false;
-        $connected = false;
         $lockName = null;
         $lockAcquired = false;
         $requeue = false;
         $finalizeError = null;
-        $secretFiles = [];
 
         try {
             $profile = CommandCatalog::normalizeProfile($job['profile']);
@@ -77,7 +73,7 @@ final class EppWorker
             $lock->bindValue(2, Config::int('API_EPP_LOCK_SECONDS', 35), PDO::PARAM_INT);
             $lock->execute();
             if ((string) $lock->fetchColumn() !== '1') {
-                throw new RegistryBusyException('Registry session is busy; submit the same idempotent request again.');
+                throw new RegistryBusyException('Registry session is busy; this queued job will retry automatically.');
             }
             $lockAcquired = true;
 
@@ -88,56 +84,34 @@ final class EppWorker
             if (!$access->fetchColumn()) {
                 throw new ApiException(403, 'registry_not_permitted', 'Registry access has been revoked.');
             }
+            if ($job['parent_job_id'] !== null && $job['command'] === 'domain.transfer') {
+                $parent = $pdo->prepare("SELECT * FROM epp_jobs WHERE id = ? AND reseller_id = ? AND registry_id = ? AND command = 'domain.transfer'");
+                $parent->execute([$job['parent_job_id'], $job['reseller_id'], $job['registry_id']]);
+                $parentRow = $parent->fetch();
+                if ($parentRow !== false) { $request['params'] = array_replace(Ownership::params($parentRow), $request['params']); }
+            }
             Access::domains($pdo, $job['registry_id'], $job['reseller_id'], $job['command'], $request['params']);
             Ownership::authorize($pdo, $job['registry_id'], $job['reseller_id'], $job['command'],
                 $request['params'], $profile, $jobId);
 
-            [$connection, $secretFiles] = self::prepareConnection($config['connection']);
-            $epp = EppRegistryFactory::create($profile);
-            $epp->disableLogging();
-            if (isset($config['loginObjects']) && is_array($config['loginObjects'])) {
-                $epp->setLoginObjects($config['loginObjects']);
+            $current = $pdo->prepare('SELECT status FROM epp_jobs WHERE id = ?');
+            $current->execute([$jobId]);
+            if ($current->fetchColumn() !== 'processing') {
+                return ['ok' => true, 'status' => 'unchanged', 'job_uuid' => $jobId];
             }
-            if (isset($config['loginExtensions']) && is_array($config['loginExtensions'])) {
-                $epp->setLoginExtensions($config['loginExtensions']);
-            }
-
-            $epp->connect($connection);
-            $connected = true;
-            self::enforceTransportTls($epp, $profile, $connection['tls'], $connection['timeout']);
-            $login = Util::normalize($epp->login($config['login']));
-            if (!is_array($login) || isset($login['error']) || (isset($login['code']) && (int) $login['code'] >= 2000)) {
-                $message = is_array($login) ? self::message($login) : 'Registry login failed.';
-                throw new RegistryLoginException($message);
-            }
-            $loggedIn = true;
-
-            $method = CommandCatalog::method($job['command']);
-            $commandAttempted = true;
-            set_error_handler(static function (int $severity, string $message, string $file, int $line): never {
-                throw new \ErrorException($message, 0, $severity, $file, $line);
+            $raw = self::withConnection($profile, $config, static function ($epp) use ($job, $request, &$commandAttempted) {
+                $method = CommandCatalog::method($job['command']);
+                $commandAttempted = true;
+                return $job['command'] === 'domain.restore_report' ? Rgp::report($epp, $request['params'])
+                    : ($method === 'hello' ? $epp->hello() : $epp->{$method}($request['params']));
             });
-            try {
-                $raw = $method === 'hello' ? $epp->hello() : $epp->{$method}($request['params']);
-            } finally {
-                restore_error_handler();
-            }
             $result = Util::normalize($raw);
             if (!is_array($result)) {
                 $result = ['response' => $result];
             }
             $eppCode = isset($result['code']) && is_numeric($result['code']) ? (int) $result['code'] : null;
 
-            if (isset($result['error']) || ($eppCode !== null && $eppCode >= 2000)) {
-                $status = CommandCatalog::isMutating($job['command']) && ($eppCode === null || $eppCode < 2000)
-                    ? 'unknown'
-                    : 'rejected';
-            } else {
-                $pending = $eppCode === 1001 || $eppCode === null
-                    || ($job['command'] === 'domain.transfer' && ($request['params']['op'] ?? '') === 'request'
-                        && !in_array($result['trStatus'] ?? '', ['clientApproved', 'serverApproved'], true));
-                $status = CommandCatalog::isMutating($job['command']) && $pending ? 'unknown' : 'succeeded';
-            }
+            $status = Lifecycle::status($job['command'], $request['params'], $result);
         } catch (RegistryBusyException $e) {
             $result = ['error' => 'registry_busy', 'message' => $e->getMessage()];
             $requeue = true;
@@ -147,31 +121,17 @@ final class EppWorker
         } catch (Throwable $e) {
             $message = self::safeException($e);
             $result = ['error' => $commandAttempted ? 'registry_command_failed' : 'registry_connection_failed', 'message' => $message];
-            $status = $commandAttempted && CommandCatalog::isMutating($job['command'])
+            $status = $commandAttempted && CommandCatalog::isMutating($job['command'], $request['params'] ?? [])
                 ? 'unknown'
                 : 'rejected';
         } finally {
-            if ($epp !== null && $loggedIn) {
-                try {
-                    $epp->logout([]);
-                } catch (Throwable) {
-                }
-            }
-            if ($epp !== null && $connected) {
-                try {
-                    $epp->disconnect();
-                } catch (Throwable) {
-                }
-            }
-            foreach ($secretFiles as $file) {
-                if (is_string($file) && is_file($file)) {
-                    @unlink($file);
-                }
-            }
             // Commit ownership and funds before another registry command can execute.
             if (!$requeue) {
                 try {
                     Ledger::completeJob($pdo, $jobId, $status, $result, $eppCode);
+                    if ($status === 'succeeded' && isset($config['login']['clID'])) {
+                        Lifecycle::observeFollowup($pdo, $job, $result, $config['login']['clID']);
+                    }
                 } catch (Throwable $e) {
                     $finalizeError = $e;
                 }
@@ -187,7 +147,7 @@ final class EppWorker
 
         if ($requeue) {
             $queue = $pdo->prepare(
-                "UPDATE epp_jobs SET status = 'queued', started_at = NULL WHERE id = ? AND status = 'processing'"
+                "UPDATE epp_jobs SET status = 'queued', started_at = NULL, dispatch_until = NULL, next_attempt_at = UTC_TIMESTAMP(6) + INTERVAL 5 SECOND WHERE id = ? AND status = 'processing'"
             );
             $queue->execute([$jobId]);
             Audit::record($pdo, $job['reseller_id'], 'epp.job_deferred', 'job', $jobId, null, [
@@ -216,6 +176,97 @@ final class EppWorker
                 'message' => $e->getMessage(),
             ]));
             return ['ok' => false, 'error' => 'job_finalize_failed', 'job_uuid' => $jobId];
+        }
+    }
+
+    /** Connection scope shared by writes and read-only lifecycle observations. */
+    public static function withConnection(string $profile, array $config, callable $operation): mixed
+    {
+        $epp = null; $connected = false; $loggedIn = false; $secretFiles = [];
+        try {
+            [$connection, $secretFiles] = self::prepareConnection($config['connection']);
+            $epp = EppRegistryFactory::create($profile); $epp->disableLogging();
+            if (isset($config['loginObjects'])) { $epp->setLoginObjects($config['loginObjects']); }
+            if (isset($config['loginExtensions'])) { $epp->setLoginExtensions($config['loginExtensions']); }
+            $epp->connect($connection); $connected = true;
+            self::enforceTransportTls($epp, $profile, $connection['tls'], $connection['timeout']);
+            $login = Util::normalize($epp->login($config['login']));
+            if (!is_array($login) || isset($login['error']) || (isset($login['code']) && (int) $login['code'] >= 2000)) {
+                throw new RegistryLoginException(is_array($login) ? self::message($login) : 'Registry login failed.');
+            }
+            $loggedIn = true;
+            set_error_handler(static function (int $severity, string $message, string $file, int $line): never {
+                throw new \ErrorException($message, 0, $severity, $file, $line);
+            });
+            try { return $operation($epp); } finally { restore_error_handler(); }
+        } finally {
+            if ($epp !== null && $loggedIn) { try { $epp->logout([]); } catch (Throwable) {} }
+            if ($epp !== null && $connected) { try { $epp->disconnect(); } catch (Throwable) {} }
+            foreach ($secretFiles as $file) { if (is_string($file) && is_file($file)) { @unlink($file); } }
+        }
+    }
+
+    public static function reconcile(string $jobId): array
+    {
+        $pdo = Db::pdo();
+        $stmt = $pdo->prepare("SELECT j.*, r.profile, r.config_nonce, r.config_cipher, r.enabled
+            FROM epp_jobs j JOIN registries r ON r.id = j.registry_id WHERE j.id = ? AND j.status = 'pending'");
+        $stmt->execute([$jobId]); $job = $stmt->fetch();
+        if ($job === false) { return ['ok' => true, 'status' => 'unchanged']; }
+        $lockName = Queue::lockName($job['registry_id']); $locked = false;
+        $error = 'Awaiting registry confirmation; original command has not been replayed.';
+        $retry = true;
+        try {
+            $lock = $pdo->prepare('SELECT GET_LOCK(?, 0)'); $lock->execute([$lockName]);
+            if ((string) $lock->fetchColumn() !== '1') { return ['ok' => true, 'status' => 'pending']; }
+            $locked = true;
+            if (!(bool) $job['enabled']) { throw new RuntimeException('Registry is disabled; reconcile after re-enabling it or verify manually.'); }
+            $config = self::validateRegistryConfig($job['profile'], json_decode(Crypto::decrypt($job['config_nonce'], $job['config_cipher'], 'registry-config:' . $job['registry_id']), true, 32, JSON_THROW_ON_ERROR));
+            $params = Ownership::params($job);
+            if (!in_array($job['command'], ['domain.transfer', 'domain.delete', 'domain.restore', 'domain.restore_report', 'domain.create', 'domain.create_dnssec'], true)) {
+                $retry = false;
+                throw new RuntimeException('This pending command needs profile-specific operator reconciliation.');
+            }
+            $observation = self::withConnection($job['profile'], $config, static fn ($epp) => $job['command'] === 'domain.transfer'
+                ? Util::normalize($epp->domainTransfer(array_replace($params, ['op' => 'query'])))
+                : Rgp::info($epp, $job['profile'], $params));
+            if (Lifecycle::settle($pdo, $job, $observation, $config['login']['clID'])) {
+                Lifecycle::observeFollowup($pdo, $job, $observation, $config['login']['clID']);
+                return ['ok' => true, 'status' => Ledger::fetchJob($pdo, $jobId)['status']];
+            }
+            if (isset($observation['error']) || (int) ($observation['code'] ?? 0) >= 2000) {
+                $error = 'Registry observation did not confirm completion; funds remain held.';
+            }
+        } catch (Throwable $e) { $error = self::safeException($e); }
+        finally {
+            $interval = max(5, Config::int('API_RECONCILE_SECONDS', 30));
+            if ($locked) { $pdo->prepare("UPDATE epp_jobs SET dispatch_until = NULL, reconcile_at = IF(? = 1, UTC_TIMESTAMP(6) + INTERVAL {$interval} SECOND, NULL), last_error = ? WHERE id = ? AND status = 'pending'")
+                ->execute([(int) $retry, mb_substr($error, 0, 255), $jobId]); }
+            if ($locked) { $pdo->prepare('SELECT RELEASE_LOCK(?)')->execute([$lockName]); }
+        }
+        return ['ok' => true, 'status' => 'pending'];
+    }
+
+    public static function checkDeleted(string $registry, string $name, string $owner): array
+    {
+        $pdo = Db::pdo(); $lockName = Queue::lockName($registry); $locked = false;
+        try {
+            $lock = $pdo->prepare('SELECT GET_LOCK(?, 0)'); $lock->execute([$lockName]);
+            if ((string) $lock->fetchColumn() !== '1') { return ['ok' => true, 'status' => 'busy']; }
+            $locked = true;
+            $stmt = $pdo->prepare("SELECT r.* FROM object_ownership o JOIN registries r ON r.id = o.registry_id
+                WHERE o.registry_id = ? AND o.object_name = ? AND o.reseller_id = ? AND o.object_type = 'domain'
+                  AND o.domain_state = 'deleted' AND o.job_id IS NULL AND r.enabled = 1");
+            $stmt->execute([$registry, $name, $owner]); $row = $stmt->fetch();
+            if ($row === false) { return ['ok' => true, 'status' => 'unchanged']; }
+            $config = self::validateRegistryConfig($row['profile'], json_decode(Crypto::decrypt($row['config_nonce'], $row['config_cipher'], 'registry-config:' . $registry), true, 32, JSON_THROW_ON_ERROR));
+            $info = self::withConnection($row['profile'], $config, static fn ($epp) => Rgp::info($epp, $row['profile'], ['domainname' => $name]));
+            Lifecycle::observeDeleted($pdo, $registry, $name, $owner, $info);
+            return ['ok' => true, 'status' => 'checked'];
+        } catch (Throwable) { return ['ok' => false, 'status' => 'unconfirmed']; }
+        finally {
+            $pdo->prepare("UPDATE object_ownership SET check_until = NULL WHERE registry_id = ? AND object_type = 'domain' AND object_name = ? AND reseller_id = ?")->execute([$registry, $name, $owner]);
+            if ($locked) { $pdo->prepare('SELECT RELEASE_LOCK(?)')->execute([$lockName]); }
         }
     }
 

@@ -20,9 +20,9 @@ final class SelfService
         $params = [$reseller];
         if ($resource === 'jobs') {
             $sql = 'SELECT j.id AS job_uuid, j.registry_id AS registry_uuid, r.name AS registry_name,
-                j.command, j.status, j.price, j.currency, j.epp_code, j.created_at, j.started_at, j.finished_at
+                j.command, j.status, j.parent_job_id AS parent_job_uuid, j.reconcile_at, j.last_error, j.price, j.currency, j.epp_code, j.created_at, j.started_at, j.finished_at
                 FROM epp_jobs j JOIN registries r ON r.id = j.registry_id WHERE j.reseller_id = ?';
-            foreach (['status' => ['queued', 'processing', 'succeeded', 'rejected', 'unknown'],
+            foreach (['status' => ['queued', 'processing', 'succeeded', 'rejected', 'unknown', 'pending'],
                 'command' => array_column(CommandCatalog::all(), 'command')] as $key => $allowed) {
                 $value = self::text($query, $key);
                 if ($value !== '') {
@@ -40,7 +40,7 @@ final class SelfService
             $order = 'j.created_at DESC, j.id DESC';
         } elseif ($resource === 'domains') {
             $sql = "SELECT o.object_name AS domainname, o.registry_id AS registry_uuid, r.name AS registry_name,
-                o.active, o.job_id AS pending_job_uuid FROM object_ownership o JOIN registries r ON r.id = o.registry_id
+                o.active, o.domain_state, o.job_id AS pending_job_uuid FROM object_ownership o JOIN registries r ON r.id = o.registry_id
                 WHERE o.reseller_id = ? AND o.object_type = 'domain'";
             if ($registry !== '') {
                 $sql .= ' AND o.registry_id = ?';
