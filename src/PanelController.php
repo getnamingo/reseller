@@ -110,7 +110,7 @@ final class PanelController
                 return $this->render($response, 'check.twig', ['title' => 'Availability result', 'job' => $job,
                     'result' => json_encode($job['result'] ?? null, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
             }
-            return $this->reseller($response, $path, $this->page($request));
+            return $this->reseller($response, $path, $this->page($request), $request->getQueryParams());
         } catch (ApiException $e) {
             return $this->render($response->withStatus($e->httpStatus), $path === '/login' ? 'login.twig' : 'error.twig',
                 ['title' => $path === '/login' ? 'Sign in' : 'Request could not be completed', 'error' => $e->getMessage()]);
@@ -133,7 +133,7 @@ final class PanelController
         }
     }
 
-    private function reseller(ResponseInterface $response, string $path, int $page): ResponseInterface
+    private function reseller(ResponseInterface $response, string $path, int $page, array $query = []): ResponseInterface
     {
         $id = $this->user['id'];
         $offset = ($page - 1) * 50;
@@ -144,6 +144,13 @@ final class PanelController
                     'SELECT id, command, status, price, currency, created_at FROM epp_jobs WHERE reseller_id = ? ORDER BY created_at DESC LIMIT 10', [$id]),
                     'counts' => PanelData::rows($this->pdo, 'SELECT object_type, COUNT(*) AS total FROM object_ownership WHERE reseller_id = ? AND active = 1 GROUP BY object_type', [$id])];
                 return $this->render($response, 'dashboard.twig', $data);
+            case '/jobs':
+                $filters = array_intersect_key($query, array_flip(['status', 'command', 'registry_uuid']));
+                $listing = SelfService::listing($this->pdo, $id, 'jobs', $filters + ['limit' => 50, 'offset' => $offset]);
+                return $this->render($response, 'jobs.twig', $data + ['title' => 'Job history', 'rows' => $listing['data'],
+                    'paginate' => true, 'next' => $listing['pagination']['has_more'], 'filters' => $filters,
+                    'query' => http_build_query($filters), 'commands' => array_column(CommandCatalog::all(), 'command'),
+                    'statuses' => ['queued', 'processing', 'succeeded', 'rejected', 'unknown']]);
             case '/account':
                 $data += ['title' => 'Account', 'rows' => PanelData::rows($this->pdo, 'SELECT id, username, role, status, currency, created_at FROM resellers WHERE id = ?', [$id]),
                     'columns' => ['id' => 'Reseller UUID', 'username' => 'Username', 'role' => 'Role (0 = admin)', 'status' => 'Status', 'currency' => 'Currency', 'created_at' => 'Created']];

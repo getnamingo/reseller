@@ -26,9 +26,9 @@ final class PanelData
             WHERE rr.reseller_id = ? ORDER BY r.name, t.tld', [$reseller]);
     }
 
-    public static function prices(PDO $pdo, string $reseller): array
+    public static function prices(PDO $pdo, string $reseller, array $filters = [], ?int $limit = null, int $offset = 0): array
     {
-        return self::rows($pdo, "SELECT r.name AS registry, p.registry_id, p.command, p.tld, p.period,
+        $sql = "SELECT r.name AS registry, p.registry_id, p.command, p.tld, p.period,
             p.amount, p.currency, CASE WHEN p.reseller_id = ? THEN 'Reseller override' ELSE 'Global' END AS scope
             FROM registry_prices p JOIN registries r ON r.id = p.registry_id
             JOIN reseller_registries rr ON rr.registry_id = p.registry_id AND rr.reseller_id = ?
@@ -38,8 +38,18 @@ final class PanelData
                 WHERE rt.registry_id = p.registry_id AND rt.reseller_id = ? AND rt.enabled = 1 AND t.enabled = 1
                   AND (rt.tld = p.tld OR RIGHT(rt.tld, CHAR_LENGTH(p.tld) + 1) = CONCAT('.', p.tld))))
               AND NOT EXISTS (SELECT 1 FROM registry_prices o WHERE p.reseller_id = ? AND o.reseller_id = ?
-                AND o.registry_id = p.registry_id AND o.command = p.command AND o.tld = p.tld AND o.period = p.period)
-            ORDER BY r.name, p.tld, p.command, p.period",
-            [$reseller, $reseller, $reseller, CommandCatalog::GLOBAL_PRICE_UUID, $reseller, CommandCatalog::GLOBAL_PRICE_UUID, $reseller]);
+                AND o.registry_id = p.registry_id AND o.command = p.command AND o.tld = p.tld AND o.period = p.period)";
+        $params = [$reseller, $reseller, $reseller, CommandCatalog::GLOBAL_PRICE_UUID, $reseller, CommandCatalog::GLOBAL_PRICE_UUID, $reseller];
+        foreach (['registry_uuid' => 'registry_id', 'command' => 'command', 'tld' => 'tld', 'period' => 'period'] as $key => $column) {
+            if (array_key_exists($key, $filters)) {
+                $sql .= " AND p.{$column} = ?";
+                $params[] = $filters[$key];
+            }
+        }
+        $sql .= ' ORDER BY r.name, p.registry_id, p.tld, p.command, p.period';
+        if ($limit !== null) {
+            $sql .= ' LIMIT ' . $limit . ' OFFSET ' . $offset;
+        }
+        return self::rows($pdo, $sql, $params);
     }
 }

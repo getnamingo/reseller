@@ -10,7 +10,7 @@
   <a class="btn btn-primary" href="/checks">Check availability</a>
 </div></div>
 <div class="row row-cards mb-4">{% for item in counts %}<div class="col-sm-4"><div class="card card-body"><div class="subheader">{{ item.object_type|capitalize }} objects</div><div class="h2 mb-0">{{ item.total }}</div></div></div>{% endfor %}</div>
-<div class="card"><div class="card-header"><h2 class="card-title">Latest API jobs</h2></div>
+<div class="card"><div class="card-header"><h2 class="card-title">Latest API jobs</h2><a class="ms-auto" href="/jobs">Full history</a></div>
 {{ tables.show(jobs, {'id':'Job UUID', 'command':'Command', 'status':'Status', 'price':'Price', 'currency':'Currency', 'created_at':'Date'}) }}
 </div>
 {% endblock %}
