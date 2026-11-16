@@ -44,8 +44,10 @@ try {
     $panel = new PanelController($pdo, Twig::create(dirname(__DIR__) . '/panel/views', ['cache' => false, 'autoescape' => 'html']), new PanelApi(new Client()));
     PanelSession::login(Auth::login($pdo, 'user-0', $password, '127.0.0.1'));
     $html = (string) request('GET')->getBody();
-    check(substr_count($html, 'name="amounts[') === 31, 'One complete TLD table has 31 price fields');
-    preg_match_all('/<input[^>]+name="amounts\[[^>]+>/', $html, $inputs);
+    preg_match('/id="add-price"(.*?)<\/form>/s', $html, $addModal);
+    $addHtml = $addModal[1];
+    check(substr_count($addHtml, 'name="amounts[') === 31, 'One complete TLD table has 31 price fields');
+    preg_match_all('/<input[^>]+name="amounts\[[^>]+>/', $addHtml, $inputs);
     check(count($inputs[0]) === 31 && count(array_filter($inputs[0], fn ($field) => str_contains($field, 'required') && !str_contains($field, 'value='))) === 31, 'Price fields start blank and are all required');
     check(!str_contains($html, '<option>contact.') && !str_contains($html, 'Set exact price'), 'Removed operations cannot be selected');
     $amounts = [];
@@ -57,7 +59,7 @@ try {
     check(request('POST', ['action' => 'price.batch', 'csrf' => $_SESSION['csrf']] + $batch)->getStatusCode() === 303, 'Price table saves through the panel');
     check((int) $pdo->query('SELECT COUNT(*) FROM registry_prices')->fetchColumn() === 31, 'All 31 rows saved');
     $html = (string) request('GET')->getBody();
-    check(substr_count($html, 'data-price-edit=') === 31 && substr_count($html, 'value="price.delete"') === 31 && str_contains($html, '<dialog id="price-editor"'), 'Each supported row has edit modal and delete controls');
+    check(substr_count($html, 'data-price-edit=') === 1 && substr_count($html, 'value="price.group_delete"') === 1 && str_contains($html, '<dialog id="price-editor"'), 'One TLD group has bulk edit and delete controls');
     $bad = $batch; $bad['amounts']['domain.restore'][0] = '';
     $bad['amounts']['domain.create'][1] = '999';
     denied('required_price', fn () => action('price.batch', $bad));
@@ -113,7 +115,7 @@ try {
     check(Ledger::fetchJob($pdo, $job['job_id'])['price'] === '1.0000', 'Deleting price never rewrites existing job amounts');
     $pdo->prepare("INSERT INTO registry_prices (registry_id, command, amount, currency) VALUES (?, 'domain.check', 100, 'EUR')")->execute([$registry]);
     $html = (string) request('GET')->getBody();
-    check(str_contains($html, 'Ignored') && substr_count($html, 'value="price.delete"') === 33 && substr_count($html, 'data-price-edit=') === 30, 'Legacy unsupported rows can only be deleted');
+    check(str_contains($html, 'Ignored') && substr_count($html, 'value="price.group_delete"') === 4 && substr_count($html, 'data-price-edit=') === 1, 'Legacy unsupported rows can only be deleted');
     action('price.delete', array_replace($edit, ['command' => 'domain.check', 'tld' => '', 'period' => '0']));
     PanelSession::login(Auth::login($pdo, 'user-1', $password, '127.0.0.1'));
     check(request('POST', ['action' => 'price.batch', 'csrf' => $_SESSION['csrf']] + $batch)->getStatusCode() === 403, 'Resellers cannot write price tables');

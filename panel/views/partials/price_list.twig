@@ -1,17 +1,18 @@
 {% import 'partials/forms.twig' as forms %}
-<div class="card"><div class="card-header"><h2 class="card-title">Configured prices</h2></div>
-<div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>Registry</th><th>Scope</th><th>TLD</th><th>Operation</th><th>Years</th><th>Total</th><th>Actions</th></tr></thead><tbody>
-{% for price in rows %}{% set supported = price.command in price_operations|keys and (price.command != 'domain.transfer' or price.period > 0) %}<tr><td title="{{ price.registry_id }}">{{ price.registry_name ?? price.registry_id }}</td><td title="{{ price.scope }}">{{ price.scope_name ?? price.scope }}</td><td>{{ price.tld ? '.' ~ price.tld : 'Registry-wide' }}</td><td>{{ price_operations[price.command] ?? price.command }}{% if not supported %} <span class="badge bg-secondary-lt">Ignored</span>{% endif %}</td><td>{{ price.period ? price.period : 'Per operation' }}</td><td>{{ price.amount }} {{ price.currency }}</td><td>
-<div class="d-flex gap-2 align-items-center">{% if supported %}<button type="button" class="btn btn-sm btn-outline-primary" data-price-edit="{{ price|json_encode }}">Edit</button>{% endif %}
-<form method="post">{{ forms.hidden('price.delete', csrf) }}{% for key in ['registry_id', 'scope', 'command', 'tld', 'period'] %}<input type="hidden" name="{{ key }}" value="{{ attribute(price, key) }}">{% endfor %}<button class="btn btn-sm btn-outline-danger">Delete</button></form></div>
-</td></tr>{% else %}<tr><td colspan="7" class="text-center text-secondary py-4">No prices configured.</td></tr>{% endfor %}
-</tbody></table></div><div class="card-footer text-secondary">Delete removes only that exact row. Any remaining global or parent-TLD fallback applies; otherwise a required price is missing and new submissions are blocked. Existing jobs keep their recorded amounts.</div></div>
+<div class="card"><div class="card-header"><h2 class="card-title">TLD price groups</h2></div>
+<div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>Registry</th><th>TLD</th><th>Scope</th><th>Currency</th><th>Price rows</th><th>Actions</th></tr></thead><tbody>
+{% for group in rows %}<tr><td title="{{ group.registry_id }}">{{ group.registry_name }}</td><td>{{ group.tld ? '.' ~ group.tld : 'Registry-wide restore / legacy' }}</td><td title="{{ group.scope }}">{{ group.scope_name }}</td><td>{{ group.currency }}</td><td>{{ group.price_count }}{% if not group.editable %} <span class="badge bg-secondary-lt">Ignored</span>{% endif %}</td><td>
+<div class="d-flex gap-2 align-items-center">{% if group.editable %}<button type="button" class="btn btn-sm btn-outline-primary" data-price-edit="{{ group|json_encode }}">Edit</button>{% endif %}
+<form method="post">{{ forms.hidden('price.group_delete', csrf) }}{% for key in ['registry_id', 'scope', 'tld', 'currency', 'version'] %}<input type="hidden" name="{{ key }}" value="{{ attribute(group, key) }}">{% endfor %}<button class="btn btn-sm btn-outline-danger">Delete all</button></form></div>
+</td></tr>{% else %}<tr><td colspan="6" class="text-center text-secondary py-4">No prices configured.</td></tr>{% endfor %}
+</tbody></table></div><div class="card-footer text-secondary">Each row groups one registry/TLD, scope and currency. Edit saves its whole supported price table. Delete all removes every price in that group, including ignored legacy rows. Other scopes/currencies and parent-suffix fallbacks remain; existing jobs keep their recorded amounts.</div></div>
 <dialog id="price-editor" class="price-dialog rounded border-0 p-0" aria-labelledby="price-editor-title">
-<form method="post" class="card card-body">{{ forms.hidden('price.set', csrf) }}
-<h2 class="card-title" id="price-editor-title">Edit price</h2><p data-price-description class="text-secondary"></p>
-{% for key in ['registry_id', 'scope', 'command', 'tld', 'period'] %}<input type="hidden" name="{{ key }}">{% endfor %}
-<label class="form-label mb-3">Total amount<input class="form-control" name="amount" type="number" min="0" step="0.0001" required></label>
-<label class="form-label mb-3">Currency<input class="form-control" name="currency" pattern="[A-Za-z]{3}" maxlength="3" placeholder="EUR" required></label>
-<div class="d-flex gap-2"><button class="btn btn-primary">Save price</button><button class="btn btn-outline-secondary" type="button" data-price-close>Cancel</button></div>
+<form method="post" class="card card-body">{{ forms.hidden('price.group_update', csrf) }}
+<h2 class="card-title" id="price-editor-title">Edit TLD prices</h2><p data-price-description class="text-secondary text-break"></p>
+{% for key in ['registry_id', 'scope', 'tld', 'currency', 'version'] %}<input type="hidden" name="{{ key }}">{% endfor %}
+<p class="text-secondary">Registry/TLD, scope and currency are fixed for this group. Fill all prices; enter 0 explicitly for free operations. Missing prices are not automatically filled.</p>
+{% include 'partials/price_fields.twig' %}
+<p class="text-secondary">Registration includes DNSSEC. Only incoming transfer requests are priced; transfer follow-ups are free.</p>
+<div class="d-flex gap-2"><button class="btn btn-primary">Save all prices</button><button class="btn btn-outline-secondary" type="button" data-price-close>Cancel</button></div>
 </form></dialog>
 <script src="/prices.js" defer></script>

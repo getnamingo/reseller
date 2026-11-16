@@ -283,16 +283,30 @@ follow-ups are free and have no price fields.
 Enter `0` explicitly for a free operation. A save updates all exact rows for that TLD
 and scope in one transaction; missing or invalid fields roll back the entire table.
 
-The price list offers an **Edit** modal for changing one row's amount/currency and a
-**Delete** button for removing that exact row. Deletion behaves as if the row had never
-been configured: any remaining global/parent-zone fallback applies; otherwise new
-submissions requiring that price fail with `price_not_configured`. Existing jobs retain
-their recorded prices. Unsupported legacy rows are marked **Ignored** and offer deletion
-only. The panel and CLI share validation for the four permitted operations, terms and
-configured TLDs. `GET /v1/prices` is read-only; there is no API price-creation endpoint.
+The price list has one row per registry/TLD, scope and currency, with pagination over
+whole groups rather than individual operation/year rows. **Edit** loads the same full
+price table with existing amounts prefilled; registry/TLD, scope and currency are fixed
+metadata, without selectors. All missing fields remain blank and required. A save updates
+the complete supported table in one transaction. Registry-wide restore groups retain a
+restore-only editor.
+
+**Delete all** removes every price row in that exact group, including ignored legacy
+operations. Other scopes, currencies and TLDs remain unchanged. Normal global/parent-zone
+fallbacks apply afterward, or required operations fail with `price_not_configured` when
+no price remains. Existing jobs keep their recorded amounts. The editor/deletion checks
+whether a group changed since loading and asks for a reload rather than overwriting a
+stale table. Legacy-only groups offer deletion only.
+
+If an older TLD table contains supported prices split across currencies, grouped editing
+refuses to overwrite the other currency silently. Use **Add price** to explicitly replace
+the complete table in the intended currency. Separate DNSSEC registration prices and
+transfer follow-up prices remain unsupported. The panel and CLI share validation;
+`GET /v1/prices` remains read-only and there is no API price-creation endpoint.
 
 Run `php8.5 tests/prices.php` with the documented `TEST_MYSQL_*` environment to exercise
-complete-table saves, validation/rollback, row editing/deletion and pricing fallback.
+complete-table saves, validation/rollback and pricing fallback. `php8.5 tests/price_groups.php`
+covers grouped edits/deletion, fixed metadata, version checks, currency isolation and
+registry-wide restore editing; `node tests/prices.js` checks editor prefilling and reset.
 
 ### Upgrade an installer-created demo
 

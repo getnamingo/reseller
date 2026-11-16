@@ -18,7 +18,7 @@ final class PanelController
         'resellers' => ['user.create', 'user.update', 'user.password', 'user.status', 'user.role', 'tokens.revoke'],
         'registries' => ['registry.save', 'registry.status', 'registry.access', 'tld.save'],
         'tlds' => ['tld.save', 'tld.access', 'tld.delete', 'tld.unassign'],
-        'prices' => ['price.set', 'price.batch', 'price.delete'],
+        'prices' => ['price.set', 'price.batch', 'price.delete', 'price.group_update', 'price.group_delete'],
         'deposits' => ['deposit.approve', 'deposit.reject'],
         'jobs' => ['job.resolve', 'job.mark_unknown'],
         'ownership' => ['object.assign'],
@@ -391,11 +391,7 @@ final class PanelController
             'resellers' => ['SELECT r.id AS account_id, r.username, r.display_name, r.company, r.email, r.role, r.status, r.currency, w.available_balance, w.held_balance FROM resellers r JOIN wallets w ON w.reseller_id = r.id ORDER BY r.username',
                 ['account_id' => 'Reseller', 'display_name' => 'Name', 'company' => 'Company', 'email' => 'Email', 'role' => 'Role', 'status' => 'Status', 'currency' => 'Currency', 'available_balance' => 'Available', 'held_balance' => 'Held']],
             'registries' => ['SELECT id, name, profile, enabled FROM registries ORDER BY name', ['id' => 'UUID', 'name' => 'Registry', 'profile' => 'Profile', 'enabled' => 'Enabled']],
-            'prices' => ["SELECT p.registry_id, r.name AS registry_name, COALESCE(u.username, 'Global defaults') AS scope_name,
-                CASE WHEN p.reseller_id = '" . CommandCatalog::GLOBAL_PRICE_UUID . "' THEN 'global' ELSE p.reseller_id END AS scope,
-                p.command, p.tld, p.period, p.amount, p.currency FROM registry_prices p JOIN registries r ON r.id = p.registry_id
-                LEFT JOIN resellers u ON u.id = p.reseller_id ORDER BY r.name, p.tld, p.command, p.period, p.reseller_id",
-                ['registry_id' => 'Registry UUID', 'scope' => 'Scope', 'command' => 'Command', 'tld' => 'TLD', 'period' => 'Term', 'amount' => 'Total', 'currency' => 'Currency']],
+            'prices' => ['', []],
             'deposits' => ['SELECT d.id, r.username, d.amount, d.currency, d.status, d.client_reference, d.created_at, d.decided_at FROM deposit_requests d JOIN resellers r ON r.id = d.reseller_id ORDER BY d.created_at DESC, d.id DESC',
                 ['id' => 'UUID', 'username' => 'Reseller', 'amount' => 'Amount', 'currency' => 'Currency', 'status' => 'Status', 'client_reference' => 'Reference', 'created_at' => 'Date', 'decided_at' => 'Decided']],
             'jobs' => ['SELECT j.id AS admin_job_id, r.username, g.name AS registry, j.command, j.status, j.price, j.currency, j.created_at FROM epp_jobs j JOIN resellers r ON r.id = j.reseller_id JOIN registries g ON g.id = j.registry_id ORDER BY j.created_at DESC, j.id DESC',
@@ -404,7 +400,7 @@ final class PanelController
                 ['registry_id' => 'Registry UUID', 'reseller_id' => 'Reseller UUID', 'object_type' => 'Type', 'object_name' => 'Object', 'active' => 'Ownership confirmed', 'domain_state' => 'Domain state', 'job_id' => 'Pending job']],
         };
         $data = ['title' => 'Manage ' . $section, 'section' => $section, 'page' => $page, 'path' => '/admin/' . $section,
-            'rows' => PanelData::rows($this->pdo, $sql . " LIMIT 51 OFFSET {$offset}"), 'columns' => $columns, 'paginate' => true,
+            'rows' => $section === 'prices' ? PanelData::adminPriceGroups($this->pdo, 51, $offset) : PanelData::rows($this->pdo, $sql . " LIMIT 51 OFFSET {$offset}"), 'columns' => $columns, 'paginate' => true,
             'resellers' => PanelData::rows($this->pdo, 'SELECT id, username FROM resellers ORDER BY username LIMIT 500'),
             'registries' => PanelData::rows($this->pdo, 'SELECT id, name FROM registries ORDER BY name LIMIT 500'),
             'profiles' => CommandCatalog::profiles(), 'commands' => array_column(CommandCatalog::all(), 'command')];
