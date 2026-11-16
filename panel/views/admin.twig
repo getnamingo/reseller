@@ -1,26 +1,13 @@
 {% extends 'layouts/app.twig' %}
 {% import 'partials/table.twig' as tables %}
 {% import 'partials/forms.twig' as forms %}
+{% block page_actions %}{% if section == 'resellers' %}<button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#add-reseller">Add a reseller</button>{% endif %}{% endblock %}
 {% block content %}
 <datalist id="resellers">{% for item in resellers %}<option value="{{ item.id }}">{{ item.username }}</option>{% endfor %}</datalist>
 <datalist id="registries">{% for item in registries %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</datalist>
-<div class="{{ section == 'prices' ? 'mb-4' : 'action-grid mb-4' }}">
+<div class="{{ section in ['prices', 'resellers'] ? 'mb-4' : 'action-grid mb-4' }}">
 {% if section == 'resellers' %}
-<p class="text-secondary">Select a reseller's UUID in the table to edit its username and contact/company details.</p>
-<div class="card card-body"><h2 class="card-title">Add a reseller</h2><form method="post">{{ forms.hidden('user.create', csrf) }}
-  {{ forms.input('username', 'Username') }}{{ forms.input('currency', 'Currency', 'text', 'EUR') }}
-  {{ forms.input('password', 'Password', 'password') }}{{ forms.input('password_confirm', 'Confirm password', 'password') }}
-  <p class="text-secondary">New accounts have reseller role 1. Their API and panel credentials are shared.</p><button class="btn btn-primary">Create reseller</button>
-</form></div>
-<div class="card card-body"><h2 class="card-title">Account status</h2><form method="post">{{ forms.hidden('user.status', csrf) }}
-  {{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}{{ forms.select('status', 'Status', {'active':'Active', 'suspended':'Suspended'}) }}<button class="btn btn-primary">Save status</button>
-</form><hr><h2 class="card-title">Role</h2><form method="post">{{ forms.hidden('user.role', csrf) }}
-  {{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}{{ forms.select('role', 'Role', {'1':'Reseller', '0':'Administrator — full control'}) }}<button class="btn btn-outline-primary">Save role</button>
-</form></div>
-<div class="card card-body"><h2 class="card-title">Reset API and panel password</h2><form method="post">{{ forms.hidden('user.password', csrf) }}
-  {{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}{{ forms.input('password', 'New password', 'password') }}{{ forms.input('password_confirm', 'Confirm password', 'password') }}
-  <p class="text-secondary">Resets login lockout and revokes existing tokens and panel sessions.</p><button class="btn btn-primary">Reset password</button>
-</form><hr><form method="post">{{ forms.hidden('tokens.revoke', csrf) }}{{ forms.input('reseller_id', 'Revoke all sessions for reseller UUID', 'text', '', 'resellers') }}<button class="btn btn-outline-danger">Revoke tokens and sessions</button></form></div>
+<p class="text-secondary">Select a reseller to manage account details, status, role and credentials.</p>
 {% elseif section == 'registries' %}
 <div class="card card-body"><h2 class="card-title">Add or update a registry</h2><form method="post">{{ forms.hidden('registry.save', csrf) }}
   {{ forms.input('registry_id', 'Existing registry UUID (blank to add)', 'text', '', 'registries', false) }}{{ forms.input('name', 'Display name') }}
@@ -69,4 +56,12 @@
 {% if section == 'prices' %}{% include 'partials/price_list.twig' %}{% else %}<div class="card">{{ tables.show(rows, columns, csrf) }}</div>{% endif %}
 {% include 'partials/pagination.twig' %}
 {% if grants is defined %}<div class="card mt-4"><div class="card-header"><h2 class="card-title">Permission records (up to 100)</h2></div>{{ tables.show(grants, grant_columns, csrf) }}</div>{% endif %}
+{% if section == 'resellers' %}
+<div class="modal modal-blur fade" id="add-reseller" tabindex="-1" aria-labelledby="add-reseller-title" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><form method="post" class="modal-content">{{ forms.hidden('user.create', csrf) }}
+<div class="modal-header"><h2 class="modal-title" id="add-reseller-title">Add a reseller</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+<div class="modal-body">{{ forms.input('username', 'Username') }}{{ forms.input('currency', 'Currency', 'text', 'EUR') }}{{ forms.input('password', 'Password', 'password') }}{{ forms.input('password_confirm', 'Confirm password', 'password') }}
+<p class="text-secondary mb-0">New accounts have reseller role 1. Their API and panel credentials are shared.</p></div>
+<div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary">Create reseller</button></div>
+</form></div></div>
+{% endif %}
 {% endblock %}

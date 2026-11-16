@@ -420,6 +420,48 @@ try {
     verify(str_contains($editedHtml, '&lt;script&gt;Company&lt;/script&gt;') && !str_contains($editedHtml, '<script>Company</script>'), 'Account details are HTML escaped');
     verify(request('/admin/resellers/' . Util::uuid())->getStatusCode() === 404, 'Missing account editor returns 404');
     verify(str_contains(body(request('/admin/resellers')), '/admin/resellers/' . $a), 'Reseller table links to editable accounts');
+    $resellerList = body(request('/admin/resellers'));
+    verify(str_contains($resellerList, 'data-bs-target="#add-reseller"') && str_contains($resellerList, 'class="modal modal-blur fade"'), 'Add reseller is a header action opening a Tabler modal');
+    verify(strpos($resellerList, 'data-bs-target="#add-reseller"') < strpos($resellerList, '<table') && strpos($resellerList, '<table') < strpos($resellerList, 'id="add-reseller"'), 'Table precedes hidden add form and follows header action');
+    verify(!str_contains($resellerList, 'value="user.status"') && !str_contains($resellerList, 'value="user.role"') && !str_contains($resellerList, 'value="user.password"'), 'Reseller list has no status, role or password forms');
+    verify(substr_count($editedHtml, 'col-12 col-lg-4') === 3 && !str_contains($editedHtml, 'name="reseller_id"'), 'Account page has three responsive action cards without UUID inputs');
+    foreach (['user.status', 'user.role', 'user.password', 'tokens.revoke'] as $actionName) {
+        verify(str_contains($editedHtml, 'value="' . $actionName . '"'), 'Account page offers ' . $actionName);
+    }
+    verify(request('/admin/resellers/' . $b, 'POST', ['action' => 'user.status', 'status' => 'suspended'], false)->getStatusCode() === 403, 'Account actions require CSRF');
+    verify(request('/admin/resellers/' . $b, 'POST', ['action' => 'user.status', 'status' => 'suspended', 'reseller_id' => $rootUser])->getStatusCode() === 303, 'Status changes use account route');
+    verify($pdo->query("SELECT status FROM resellers WHERE id='$b'")->fetchColumn() === 'suspended' && $pdo->query("SELECT status FROM resellers WHERE id='$rootUser'")->fetchColumn() === 'active', 'Status cannot target forged reseller ID');
+    verify(str_contains(body(request('/admin/resellers/' . $b)), 'value="suspended" selected'), 'Status card reflects current value');
+    request('/admin/resellers/' . $b, 'POST', ['action' => 'user.status', 'status' => 'active']);
+    verify(request('/admin/resellers/' . $b, 'POST', ['action' => 'user.role', 'role' => '0', 'reseller_id' => $a])->getStatusCode() === 303, 'Role changes use account route');
+    verify($pdo->query("SELECT role FROM resellers WHERE id='$b'")->fetchColumn() === '0' && $pdo->query("SELECT role FROM resellers WHERE id='$a'")->fetchColumn() === '1', 'Role cannot target forged reseller ID');
+    verify(str_contains(body(request('/admin/resellers/' . $b)), 'value="0" selected'), 'Role card reflects current value');
+    request('/admin/resellers/' . $b, 'POST', ['action' => 'user.role', 'role' => '1']);
+    $oldToken = Auth::login($pdo, 'reseller-b', $password, '192.0.2.100')['access_token'];
+    $newPassword = 'new password for selected account';
+    verify(request('/admin/resellers/' . $b, 'POST', ['action' => 'user.password', 'password' => $newPassword, 'password_confirm' => $newPassword, 'reseller_id' => $rootUser])->getStatusCode() === 303, 'Password reset uses account route');
+    denied('unauthorized', fn () => Auth::authenticate($pdo, 'Bearer ' . $oldToken));
+    verify(Auth::login($pdo, 'reseller-b', $newPassword, '192.0.2.100')['reseller_uuid'] === $b, 'Selected reseller can log in with reset password');
+    request('/admin/resellers/' . $b, 'POST', ['action' => 'user.password', 'password' => $password, 'password_confirm' => $password]);
+    $revokeToken = Auth::login($pdo, 'reseller-b', $password, '192.0.2.100')['access_token'];
+    verify(request('/admin/resellers/' . $b, 'POST', ['action' => 'tokens.revoke', 'reseller_id' => $rootUser])->getStatusCode() === 303, 'Session revocation uses account route');
+    denied('unauthorized', fn () => Auth::authenticate($pdo, 'Bearer ' . $revokeToken));
+    verify(request('/admin/resellers/' . $rootUser, 'POST', ['action' => 'user.role', 'role' => '1'])->getStatusCode() === 422, 'Administrator cannot demote self through account page');
+    verify(request('/admin/resellers/' . $rootUser, 'POST', ['action' => 'user.status', 'status' => 'suspended'])->getStatusCode() === 422, 'Administrator cannot suspend self through account page');
+    verify(request('/admin/resellers/' . $b, 'POST', ['action' => 'user.create'])->getStatusCode() === 422, 'Account page rejects unrelated actions');
+    verify(request('/admin/resellers/' . Util::uuid(), 'POST', ['action' => 'user.status', 'status' => 'active'])->getStatusCode() === 404, 'Account actions reject missing accounts');
+    $insertPageAccount = $pdo->prepare("INSERT INTO resellers (id, username, password_hash, currency) VALUES (?, ?, ?, 'EUR')");
+    for ($i = 0; $i < 51; ++$i) {
+        $pagingId = Util::uuid();
+        $insertPageAccount->execute([$pagingId, sprintf('paging-demo-%02d', $i), $hash]);
+        $pdo->prepare("INSERT INTO wallets (reseller_id, currency) VALUES (?, 'EUR')")->execute([$pagingId]);
+    }
+    $firstAccounts = body(request('/admin/resellers'));
+    $secondAccounts = body(request('/admin/resellers?page=2'));
+    verify(substr_count($firstAccounts, 'class="fw-semibold" href="/admin/resellers/') === 50 && str_contains($firstAccounts, '/admin/resellers?page=2'), 'Reseller table shows 50 accounts with next-page link');
+    verify(substr_count($secondAccounts, 'class="fw-semibold" href="/admin/resellers/') === 4 && str_contains($secondAccounts, 'Previous'), 'Reseller table pagination exposes remaining accounts');
+    $pdo->exec("DELETE FROM wallets WHERE reseller_id IN (SELECT id FROM resellers WHERE username LIKE 'paging-demo-%')");
+    $pdo->exec("DELETE FROM resellers WHERE username LIKE 'paging-demo-%'");
     $tldHtml = body(request('/admin/tlds'));
     verify(str_contains($tldHtml, 'value="tld.delete"') && str_contains($tldHtml, 'Remove unused TLD') && str_contains($tldHtml, 'value="tld.unassign"'), 'TLD table offers removal, state and assignment controls');
     verify(request('/admin/tlds', 'POST', ['action' => 'tld.delete', 'registry_id' => $registry, 'tld' => 'com'])->getStatusCode() === 422, 'TLD removal requires explicit form confirmation');
