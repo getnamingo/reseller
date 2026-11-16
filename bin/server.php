@@ -10,6 +10,7 @@ use Namingo\ResellerApi\CommandCatalog;
 use Namingo\ResellerApi\Config;
 use Namingo\ResellerApi\Crypto;
 use Namingo\ResellerApi\Db;
+use Namingo\ResellerApi\Domains;
 use Namingo\ResellerApi\EppWorker;
 use Namingo\ResellerApi\Ledger;
 use Namingo\ResellerApi\Lifecycle;
@@ -145,6 +146,10 @@ $server->on('WorkerStart', static function (Server $server, int $workerId) use (
         \Swoole\Timer::tick(max(250, Config::int('API_QUEUE_TICK_MS', 1000)), static function () use ($server): void {
             try { Queue::tick(Db::pdo(), static fn (array $task) => $server->task($task)); }
             catch (Throwable $e) { Db::reset(); error_log(Util::json(['event' => 'queue_dispatch_failed', 'type' => get_class($e)])); }
+        });
+        \Swoole\Timer::tick(5000, static function (): void {
+            try { Domains::tick(Db::pdo()); }
+            catch (Throwable $e) { Db::reset(); error_log(Util::json(['event' => 'panel_domain_progress_failed', 'type' => get_class($e)])); }
         });
         \Swoole\Timer::tick(120_000, static function () use ($rateTable): void {
             $expiredBefore = intdiv(time(), 60) - 2;

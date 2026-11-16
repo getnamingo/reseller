@@ -162,6 +162,9 @@ try {
             if ($exists !== false && !$pdo->query("SELECT 1 FROM schema_migrations WHERE version = '006_contacts'")->fetchColumn()) {
                 $pdo->exec(file_get_contents($root . '/database/006_contacts.sql'));
             }
+            if ($exists !== false && !$pdo->query("SELECT 1 FROM schema_migrations WHERE version = '007_panel_domains'")->fetchColumn()) {
+                $pdo->exec(file_get_contents($root . '/database/007_panel_domains.sql'));
+            }
             $sql = file_get_contents($root . '/database/schema.sql');
             if ($sql === false) {
                 throw new RuntimeException('database/schema.sql is missing.');

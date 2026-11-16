@@ -1,0 +1,3 @@
+<div class="table-responsive"><table class="table table-vcenter"><thead><tr><th>DS record</th><th>Key tag</th><th>Algorithm</th><th>Digest type</th><th>Digest</th></tr></thead><tbody>
+{% for i in 1..2 %}<tr><td>{{ i }}</td>{% for field in ['keyTag', 'alg', 'digestType', 'digest'] %}<td><input class="form-control" name="{{ field }}_{{ i }}" aria-label="DS {{ i }} {{ field }}" {% if field != 'digest' %}inputmode="numeric"{% endif %}></td>{% endfor %}</tr>{% endfor %}
+</tbody></table></div>

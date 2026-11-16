@@ -1,0 +1,19 @@
+{% extends 'layouts/app.twig' %}
+{% block page_actions %}<button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#create-domain">Create domain</button>{% endblock %}
+{% block content %}
+<div class="card"><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>Domain</th>{% if section %}<th>Reseller</th>{% endif %}<th>Registry</th><th>State</th><th>Actions</th></tr></thead><tbody>
+{% for row in rows %}{% set detail = path ~ '/' ~ row.registry_id ~ '/' ~ row.object_name %}<tr><td><a class="fw-semibold" href="{{ detail }}">{{ row.object_name }}</a></td>{% if section %}<td>{{ row.username }}</td>{% endif %}<td>{{ row.registry }}</td><td><span class="badge {{ row.active ? 'bg-green-lt' : 'bg-secondary-lt' }}">{{ row.domain_state }}{% if row.job_id %} · operation pending{% endif %}</span></td><td><div class="btn-list flex-nowrap"><a class="btn btn-sm" href="{{ detail }}">Update</a><a class="btn btn-sm btn-outline-primary" href="{{ detail }}#renew">Renew</a><a class="btn btn-sm btn-outline-danger" href="{{ detail }}#delete">Delete</a></div></td></tr>
+{% else %}<tr><td colspan="{{ section ? 5 : 4 }}" class="text-secondary text-center py-4">No domains yet.</td></tr>{% endfor %}
+</tbody></table></div></div>{% include 'partials/pagination.twig' %}
+{% include 'partials/domain_operations.twig' %}
+<div class="modal fade" id="create-domain" tabindex="-1" aria-label="Create domain" aria-hidden="true"><div class="modal-dialog modal-xl modal-dialog-scrollable"><form class="modal-content" method="post" action="{{ path }}"><div class="modal-header"><h2 class="modal-title">Create domain</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close"></button></div><div class="modal-body">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="key" value="{{ key }}"><input type="hidden" name="action" value="create">
+{% if section %}<label class="form-label">Reseller<select class="form-select" name="reseller_id" required>{% for reseller in resellers %}<option value="{{ reseller.id }}">{{ reseller.username }}</option>{% endfor %}</select></label>{% endif %}
+<div class="row g-3"><div class="col-md-9"><label class="form-label">Domain name / bulk names<textarea class="form-control" name="domains" rows="4" required placeholder="example.com&#10;example.net"></textarea></label><div class="form-hint">Up to 50 ASCII/punycode names, separated by spaces, commas or lines. The TLD selects the permitted registry. The settings below apply to every name.</div></div>
+<div class="col-md-3"><label class="form-label">Years<select class="form-select" name="years">{% for i in 1..10 %}<option>{{ i }}</option>{% endfor %}</select></label></div></div>
+<h3 class="mt-4">Contacts</h3><div class="row g-3">{% for field, label in {'registrant':'Registrant (owner)', 'admin':'Administrative contact', 'tech':'Technical contact', 'billing':'Billing contact'} %}<div class="col-md-6"><label class="form-label">{{ label }}<input class="form-control" name="{{ field }}" placeholder="Registry contact ID (optional)"></label></div>{% endfor %}</div><div class="form-hint">Use contact IDs belonging to this reseller in the target registry. Registry policy determines which roles are required. Each domain receives an automatically generated authorization code.</div>
+<h3 class="mt-4">Nameservers</h3>{% include 'partials/domain_nameservers.twig' with {hosts: []} %}
+<h3 class="mt-4">DNSSEC (optional)</h3>{% include 'partials/domain_dnssec.twig' %}<div class="form-hint">Supplying DS records uses the API's DNSSEC registration command, at the normal registration price.</div>
+{% include 'partials/domain_native.twig' %}
+</div><div class="modal-footer"><button class="btn" type="button" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary">Create at configured prices</button></div></form></div></div>
+{% endblock %}

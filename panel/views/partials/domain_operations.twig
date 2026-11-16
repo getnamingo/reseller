@@ -1,0 +1,11 @@
+{% if operations %}
+<div class="card mt-4"><div class="card-header"><h2 class="card-title">Operation results</h2></div><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>Domain</th><th>Status</th><th>Registry operations / result</th></tr></thead><tbody>
+{% for op in operations %}<tr><td>{{ op.name }}</td><td><span class="badge {{ op.status == 'succeeded' ? 'bg-green-lt' : (op.status in ['rejected','unknown'] ? 'bg-red-lt' : 'bg-blue-lt') }}">{{ op.status }}</span></td><td>
+{% if op.message %}<div class="text-danger">{{ op.message }}</div>{% endif %}
+{% for step in op.steps %}<div class="mb-1"><span class="fw-semibold">{{ step.command }}</span>: {{ step.status }}{% if step.epp_code %} · EPP {{ step.epp_code }}{% endif %}{% if step.message %} · {{ step.message }}{% endif %}
+{% if step.job_uuid %}<a class="small" href="{{ section ? '/admin/jobs/' : '/jobs/' }}{{ step.job_uuid }}">Job details</a>{% endif %}</div>{% endfor %}
+{% if op.status == 'unknown' %}<div class="text-danger">The outcome is uncertain. Ask the registrar to reconcile this operation before submitting another request.</div>{% endif %}
+</td></tr>{% endfor %}</tbody></table></div><div class="card-footer text-secondary">Each registry operation has its own outcome. A later failure does not undo earlier successful steps. Saved sequences continue through the API queue even when this page is closed.</div></div>
+{% endif %}
+<div id="domain-progress" class="text-secondary mt-3" role="status" data-version="{{ version }}" data-pending="{{ pending ? '1' : '0' }}">{% if pending %}Updating operation results automatically…{% endif %}</div>
+<script src="/domains.js" defer></script>

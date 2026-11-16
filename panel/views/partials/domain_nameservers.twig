@@ -1,0 +1,6 @@
+<div class="table-responsive"><table class="table table-vcenter"><thead><tr><th>Nameserver</th><th>IPv4 glue (optional)</th><th>IPv6 glue (optional)</th></tr></thead><tbody>
+{% for i in 1..5 %}{% set host = hosts[i - 1]|default('') %}<tr>
+<td><input class="form-control" name="ns{{ i }}" aria-label="Nameserver {{ i }}" placeholder="ns{{ i }}.example.net" value="{{ host is iterable ? host.hostName|default('') : host }}"></td>
+<td><input class="form-control" name="ipv4_{{ i }}" aria-label="IPv4 for nameserver {{ i }}" value="{{ host is iterable ? host.ipv4|default('') : '' }}"></td>
+<td><input class="form-control" name="ipv6_{{ i }}" aria-label="IPv6 for nameserver {{ i }}" value="{{ host is iterable ? host.ipv6|default('') : '' }}"></td>
+</tr>{% endfor %}</tbody></table></div>
