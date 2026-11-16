@@ -27,9 +27,9 @@ final class PanelApi
             'allow_redirects' => false, 'http_errors' => false, 'connect_timeout' => 5, 'timeout' => 40]));
     }
 
-    public function check(string $token, string $registry, array $domains, string $key): array
+    public function check(string $token, string $registry, array $domains, string $key, bool $async = true): array
     {
-        return $this->call('POST', 'v1/epp/domain.check', $token, ['headers' => ['Idempotency-Key' => $key, 'Prefer' => 'respond-async'],
+        return $this->call('POST', 'v1/epp/domain.check', $token, ['headers' => ['Idempotency-Key' => $key] + ($async ? ['Prefer' => 'respond-async'] : []),
             'json' => ['registry_uuid' => $registry, 'params' => ['domains' => $domains]]]);
     }
 
