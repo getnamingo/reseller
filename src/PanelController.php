@@ -316,14 +316,13 @@ final class PanelController
                     'query' => http_build_query($filters), 'commands' => array_column(CommandCatalog::all(), 'command'),
                     'statuses' => ['queued', 'processing', 'succeeded', 'rejected', 'unknown', 'pending']]);
             case '/account':
-                $data += ['title' => 'Account', 'rows' => PanelData::rows($this->pdo, 'SELECT id, username, display_name, company, email, phone, address, country_code, role, status, currency, created_at FROM resellers WHERE id = ?', [$id]),
-                    'columns' => ['id' => 'Reseller UUID', 'username' => 'Username', 'display_name' => 'Name', 'company' => 'Company', 'email' => 'Email', 'phone' => 'Phone', 'address' => 'Address', 'country_code' => 'Country', 'role' => 'Role (0 = admin)', 'status' => 'Status', 'currency' => 'Currency', 'created_at' => 'Created']];
-                break;
+                return $this->render($response, 'account.twig', $data + ['title' => 'Account',
+                    'account' => PanelData::rows($this->pdo, 'SELECT id, username, display_name, company, email, phone, address, country_code, role, status, currency, created_at FROM resellers WHERE id = ?', [$id])[0] ?? [],
+                    'access' => PanelData::access($this->pdo, $id),
+                    'access_columns' => ['registry' => 'Registry', 'registry_id' => 'UUID', 'profile' => 'Profile', 'registry_enabled' => 'Registry enabled', 'access_enabled' => 'Access enabled',
+                        'tld' => 'TLD', 'tld_enabled' => 'TLD enabled', 'permitted' => 'TLD permitted']]);
             case '/access':
-                $data += ['title' => 'Registry and TLD access', 'rows' => PanelData::access($this->pdo, $id),
-                    'columns' => ['registry' => 'Registry', 'registry_id' => 'UUID', 'profile' => 'Profile', 'registry_enabled' => 'Registry enabled', 'access_enabled' => 'Access enabled',
-                        'tld' => 'TLD', 'tld_enabled' => 'TLD enabled', 'permitted' => 'TLD permitted']];
-                break;
+                return $this->redirect($response, '/account');
             case '/prices':
                 $groups = [];
                 foreach (PanelData::prices($this->pdo, $id) as $price) {

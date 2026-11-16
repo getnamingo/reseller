@@ -662,6 +662,14 @@ the updated API/panel. Existing accounts receive empty optional details. Run
 `tests/admin_editing.php` with the documented `TEST_MYSQL_*` settings to verify account
 editing, token behavior, CLI commands, migration and safe TLD removal.
 
+### Reseller account and access
+
+The reseller **Account** page presents all existing account fields in a responsive
+Tabler data grid, followed by the full **Registry and TLD access** table. The table
+retains registry UUID/profile and all registry/access/TLD permission flags. Both sections
+are scoped to the signed-in reseller and remain read-only. The separate Access menu
+item is removed, and `/access` redirects to `/account` for existing bookmarks.
+
 ### Deposit and job administration
 
 **Administration → Deposits** and **Jobs** focus on their paginated tables, with no
