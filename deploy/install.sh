@@ -170,7 +170,7 @@ main() {
   apt-get update
   apt-get install -y composer mariadb-client mariadb-server caddy \
     php8.5-cli php8.5-common php8.5-fpm php8.5-curl php8.5-mbstring php8.5-mysql \
-    php8.5-opcache php8.5-swoole php8.5-xml php8.5-zip
+    php8.5-swoole php8.5-xml php8.5-zip
   php8.5 -r 'foreach (["curl","openssl","pdo_mysql","mbstring","SimpleXML","sodium","swoole","xmlwriter"] as $e) { if (!extension_loaded($e)) { fwrite(STDERR,"Missing extension: $e\n"); exit(1); } }'
   systemctl enable --now mariadb
   [[ $(db_root --batch --skip-column-names -e "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='namingo_api'") == 0 ]] \
