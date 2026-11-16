@@ -90,6 +90,18 @@ try {
     action('price.delete', array_replace($edit, ['command' => 'domain.check', 'tld' => '', 'period' => '0']));
     PanelSession::login(Auth::login($pdo, 'user-1', $password, '127.0.0.1'));
     check(request('POST', ['action' => 'price.batch', 'csrf' => $_SESSION['csrf']] + $batch)->getStatusCode() === 403, 'Resellers cannot write price tables');
+    // Suggestions stay bounded, but valid accounts beyond the first 500 are selectable.
+    PanelSession::login(Auth::login($pdo, 'user-0', $password, '127.0.0.1'));
+    $hash = $pdo->query("SELECT password_hash FROM resellers WHERE id = '$root'")->fetchColumn();
+    $insert = $pdo->prepare("INSERT INTO resellers (id, username, password_hash, currency, role) VALUES (?, ?, ?, 'EUR', 1)");
+    for ($i = 0; $i < 501; ++$i) { $insert->execute([Util::uuid(), sprintf('a-suggestion-%03d', $i), $hash]); }
+    $overflow = Util::uuid();
+    $insert->execute([$overflow, 'zz-outside-suggestions', $hash]);
+    $html = (string) request('GET')->getBody();
+    check(str_contains($html, 'name="scope" list="price-scopes"') && str_contains($html, 'paste any reseller UUID'), 'Price scope accepts typed UUIDs alongside suggestions');
+    check(!str_contains($html, $overflow), 'Regression account is outside the first 500 suggestions');
+    check(request('POST', ['action' => 'price.batch', 'csrf' => $_SESSION['csrf']] + array_replace($batch, ['scope' => $overflow]))->getStatusCode() === 303, 'Unlisted reseller can receive a complete override table');
+    check((int) $pdo->query("SELECT COUNT(*) FROM registry_prices WHERE reseller_id = '$overflow'")->fetchColumn() === 42, 'All overrides persist for the unlisted reseller');
     echo "PASS: $checks price-management assertions\n";
 } finally {
     $pdo = null; $admin->exec("DROP DATABASE `$db`"); session_destroy();
