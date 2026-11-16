@@ -68,6 +68,19 @@ final class PanelController
                 PanelSession::clear();
                 return $this->redirect($response, '/login');
             }
+            if (preg_match('#^(/admin)?/contacts(?:/([a-f0-9-]{36}))?$#D', $path, $match)) {
+                $admin = ($match[1] ?? '') === '/admin';
+                if ($admin && (int) $this->user['role'] !== 0) { throw new ApiException(403, 'admin_required', 'Administrator access is required.'); }
+                return $this->contacts($request, $response, $admin, $match[2] ?? null, $input, $ip);
+            }
+            if ($path === '/admin/domains') {
+                if ((int) $this->user['role'] !== 0) { throw new ApiException(403, 'admin_required', 'Administrator access is required.'); }
+                if ($method !== 'GET') { throw new ApiException(405, 'method_not_allowed', 'Use GET for domain listings.'); }
+                $page = $this->page($request); $offset = ($page - 1) * 50;
+                return $this->render($response, 'table.twig', $this->pagination(['title' => 'All domains', 'section' => 'domains', 'path' => $path, 'page' => $page, 'paginate' => true,
+                    'rows' => PanelData::rows($this->pdo, "SELECT o.object_name, u.username, r.name AS registry, o.active, o.domain_state, o.job_id FROM object_ownership o JOIN registries r ON r.id = o.registry_id JOIN resellers u ON u.id = o.reseller_id WHERE o.object_type = 'domain' ORDER BY o.object_name, o.registry_id LIMIT 51 OFFSET {$offset}"),
+                    'columns' => ['object_name' => 'Domain', 'username' => 'Reseller', 'registry' => 'Registry', 'active' => 'Active', 'domain_state' => 'Domain state', 'job_id' => 'Pending job']]));
+            }
             if (str_starts_with($path, '/admin/')) {
                 if ((int) $this->user['role'] !== 0) {
                     throw new ApiException(403, 'admin_required', 'Administrator access is required.');
@@ -211,6 +224,45 @@ final class PanelController
         }
     }
 
+    private function contacts(ServerRequestInterface $request, ResponseInterface $response, bool $admin, ?string $id, array $input, string $ip): ResponseInterface
+    {
+        $path = $admin ? '/admin/contacts' : '/contacts';
+        // The reseller workspace remains own-account-only, including when an administrator uses it.
+        $actor = $admin ? $this->user : array_replace($this->user, ['role' => 1]);
+        if ($request->getMethod() === 'POST') {
+            $id ??= is_string($input['contact_id'] ?? null) ? $input['contact_id'] : '';
+            Contacts::submit($this->pdo, $actor, $id, $input, $ip);
+            $_SESSION['flash'] = 'Contact operation submitted. Registry outcomes and EPP errors are shown below.';
+            if (!PanelData::rows($this->pdo, 'SELECT id FROM panel_contacts WHERE id = ?', [$id])) { return $this->redirect($response, $path); }
+            return $this->redirect($response, $path . '/' . $id);
+        }
+        $page = $this->page($request);
+        $registries = $admin ? PanelData::rows($this->pdo, 'SELECT id, name, profile FROM registries ORDER BY name')
+            : PanelData::rows($this->pdo, 'SELECT r.id, r.name, r.profile FROM registries r JOIN reseller_registries a ON a.registry_id = r.id WHERE a.reseller_id = ? AND a.enabled = 1 AND r.enabled = 1 ORDER BY r.name', [$actor['id']]);
+        $data = ['title' => $admin ? 'Manage contacts' : 'Your contacts', 'section' => $admin ? 'contacts' : null, 'path' => $path,
+            'registry_options' => $registries, 'contact_fields' => ProfileParams::contactFields(), 'key' => Util::uuid(),
+            'resellers' => $admin ? PanelData::rows($this->pdo, 'SELECT id, username FROM resellers ORDER BY username') : []];
+        if ($id !== null) {
+            $contact = Contacts::get($this->pdo, $id, $actor);
+            if ($contact === null) {
+                if (($request->getQueryParams()['format'] ?? '') === 'json') {
+                    $response->getBody()->write(Util::json(['deleted' => true]));
+                    return $response->withHeader('Content-Type', 'application/json')->withHeader('Cache-Control', 'no-store');
+                }
+                return $this->redirect($response, $path);
+            }
+            $pending = array_filter($contact['registries'], fn ($link) => in_array($link['status'] ?? '', ['queued', 'processing'], true)) !== [];
+            if (($request->getQueryParams()['format'] ?? '') === 'json') {
+                $response->getBody()->write(Util::json(['version' => $contact['version'], 'pending' => $pending, 'deleted' => false]));
+                return $response->withHeader('Content-Type', 'application/json')->withHeader('Cache-Control', 'no-store');
+            }
+            return $this->render($response, 'contact.twig', $data + ['title' => 'Manage contact', 'contact' => $contact, 'pending' => $pending]);
+        }
+        $listing = Contacts::listing($this->pdo, $actor, $page, $admin);
+        return $this->render($response, 'contacts.twig', $data + $listing + ['page' => $page, 'paginate' => true,
+            'contact' => ['id' => Util::uuid(), 'reseller_id' => $actor['id'], 'data' => Contacts::defaults(), 'registries' => []]]);
+    }
+
     private function submitChecks(array $input): string
     {
         $key = $input['key'] ?? null;
@@ -342,9 +394,9 @@ final class PanelController
                     'deposits' => PanelData::rows($this->pdo, 'SELECT id, client_reference, amount, currency, status, created_at FROM deposit_requests WHERE reseller_id = ? ORDER BY created_at DESC LIMIT 50', [$id]), 'deposit_reference' => Util::uuid(), 'paginate' => true];
                 break;
             case '/domains':
-                $data += ['title' => 'Your domains, contacts and hosts', 'rows' => PanelData::rows($this->pdo,
-                    "SELECT o.registry_id, o.object_type, o.object_name, r.name AS registry, o.active, o.domain_state, o.job_id FROM object_ownership o JOIN registries r ON r.id = o.registry_id WHERE o.reseller_id = ? ORDER BY o.object_type, o.object_name LIMIT 51 OFFSET {$offset}", [$id]),
-                    'columns' => ['object_type' => 'Type', 'object_name' => 'Object', 'registry' => 'Registry', 'active' => 'Active', 'domain_state' => 'Domain state', 'job_id' => 'Pending job', 'restore_key' => 'Restore'], 'paginate' => true];
+                $data += ['title' => 'Your domains', 'rows' => PanelData::rows($this->pdo,
+                    "SELECT o.registry_id, o.object_type, o.object_name, r.name AS registry, o.active, o.domain_state, o.job_id FROM object_ownership o JOIN registries r ON r.id = o.registry_id WHERE o.reseller_id = ? AND o.object_type = 'domain' ORDER BY o.object_name, o.registry_id LIMIT 51 OFFSET {$offset}", [$id]),
+                    'columns' => ['object_name' => 'Domain', 'registry' => 'Registry', 'active' => 'Active', 'domain_state' => 'Domain state', 'job_id' => 'Pending job', 'restore_key' => 'Restore'], 'paginate' => true];
                 foreach ($data['rows'] as &$object) { $object['restore_key'] = Util::uuid(); }
                 unset($object);
                 break;

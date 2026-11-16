@@ -546,7 +546,7 @@ try {
     verify((int) $pdo->query('SELECT COUNT(*) FROM resellers WHERE role = 0')->fetchColumn() === 0, 'Migration defaults every existing account to reseller');
     verify((int) $pdo->query('SELECT COUNT(*) FROM registry_tlds')->fetchColumn() === 2, 'Migration backfills explicitly priced zones');
     verify((int) $pdo->query('SELECT COUNT(*) FROM reseller_tlds')->fetchColumn() === 6, 'Migration grants known zones to existing registry members');
-    verify((int) $pdo->query('SELECT COUNT(*) FROM schema_migrations')->fetchColumn() === 5, 'Migration version recorded');
+    verify((int) $pdo->query('SELECT COUNT(*) FROM schema_migrations')->fetchColumn() === 6, 'Migration version recorded');
     $_ENV['APP_ENV'] = 'production'; $_ENV['PANEL_ORIGIN'] = 'https://panel.example.test';
     $_SERVER['HTTPS'] = '';
     try {

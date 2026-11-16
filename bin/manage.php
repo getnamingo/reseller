@@ -159,6 +159,9 @@ try {
             if ($exists !== false && !$pdo->query("SELECT 1 FROM schema_migrations WHERE version = '005_account_details'")->fetchColumn()) {
                 $pdo->exec(file_get_contents($root . '/database/005_account_details.sql'));
             }
+            if ($exists !== false && !$pdo->query("SELECT 1 FROM schema_migrations WHERE version = '006_contacts'")->fetchColumn()) {
+                $pdo->exec(file_get_contents($root . '/database/006_contacts.sql'));
+            }
             $sql = file_get_contents($root . '/database/schema.sql');
             if ($sql === false) {
                 throw new RuntimeException('database/schema.sql is missing.');
