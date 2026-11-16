@@ -157,11 +157,24 @@ try {
     verify(Auth::authenticate($pdo, 'Bearer ' . $bearer)['id'] === $a, 'Panel uses real scoped API token');
     action('object.assign', ['registry_id' => $registry, 'reseller_id' => $a, 'object_type' => 'domain', 'object_name' => 'own.com']);
     action('object.assign', ['registry_id' => $registry, 'reseller_id' => $b, 'object_type' => 'domain', 'object_name' => 'private.net']);
-    foreach (['/', '/account', '/prices', '/access', '/wallet', '/domains', '/checks', '/jobs'] as $path) {
+    foreach (['/', '/account', '/prices', '/wallet', '/domains', '/checks', '/jobs'] as $path) {
         $response = request($path);
         verify($response->getStatusCode() === 200, 'Reseller page renders: ' . $path . ' ' . body($response));
         verify(!str_contains(body($response), $bearer) && !str_contains(body($response), 'upstream-secret'), 'No bearer token or registry secrets in HTML');
     }
+    verify(request('/access')->getHeaderLine('Location') === '/account', 'Former Access page redirects to Account');
+    $accountHtml = body(request('/account'));
+    verify(substr_count($accountHtml, 'class="datagrid-item"') === 12 && str_contains($accountHtml, 'class="datagrid"'), 'Account details use a Tabler data grid with all existing fields');
+    verify(strpos($accountHtml, 'Account details') < strpos($accountHtml, 'Registry and TLD access') && str_contains($accountHtml, $registry), 'Account shows registry/TLD access below its details');
+    foreach (['Registry enabled', 'Access enabled', 'TLD enabled', 'TLD permitted', 'Profile', 'UUID'] as $label) { verify(str_contains($accountHtml, $label), 'Merged access table retains ' . $label); }
+    verify(!str_contains($accountHtml, 'href="/access"'), 'Separate Access navigation link removed');
+    $pdo->prepare('UPDATE resellers SET address = ? WHERE id = ?')->execute(["Street 1\n<script>address</script>", $a]);
+    $pdo->prepare('UPDATE resellers SET display_name = ? WHERE id = ?')->execute(['Other tenant private name', $b]);
+    $accountHtml = body(request('/account?reseller_id=' . $b));
+    verify(str_contains($accountHtml, 'Street 1<br') && str_contains($accountHtml, '&lt;script&gt;address&lt;/script&gt;') && !str_contains($accountHtml, '<script>address</script>'), 'Data grid preserves address lines and escapes markup');
+    verify(str_contains($accountHtml, $a) && !str_contains($accountHtml, 'Other tenant private name') && !str_contains($accountHtml, $b), 'Account details cannot be retargeted with a submitted reseller UUID');
+    $pdo->prepare("UPDATE resellers SET address = '' WHERE id = ?")->execute([$a]);
+    $pdo->prepare("UPDATE resellers SET display_name = '' WHERE id = ?")->execute([$b]);
     $walletHtml = body(request('/wallet'));
     verify(str_contains($walletHtml, 'action="/wallet/deposits"') && str_contains($walletHtml, 'only after receipt of funds is verified'), 'Wallet offers a deposit request with approval explanation');
     verify(preg_match('/name="reference" value="[a-f0-9-]{36}"/', $walletHtml) === 1, 'Deposit form generates a reusable reference');
