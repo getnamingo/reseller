@@ -66,6 +66,8 @@ try{
     foreach(['com','uk','co.uk','unused'] as $tld)Admin::perform($pdo,$root,'tld.save',['registry_id'=>$registry,'tld'=>$tld,'enabled'=>'1'],'127.0.0.1');
     foreach(['com','uk','co.uk','unused'] as $tld)foreach([$a,$b] as $id)Admin::perform($pdo,$root,'tld.access',['registry_id'=>$registry,'reseller_id'=>$id,'tld'=>$tld,'enabled'=>'1'],'127.0.0.1');
     foreach([CommandCatalog::GLOBAL_PRICE_UUID,$a] as $scope)$pdo->prepare("INSERT INTO registry_prices(registry_id,reseller_id,command,tld,period,amount,currency) VALUES(?,?,'domain.create','unused',1,10,'EUR')")->execute([$registry,$scope]);
+    $result=cli(['price:set',$registry,'domain.check','0','EUR']);
+    check($result[0]===1 && str_contains($result[2],'Prices may only be set'), 'CLI rejects unsupported price commands');
     $pdo->prepare("INSERT INTO registry_prices(registry_id,command,amount,currency) VALUES(?,'domain.check',0,'EUR')")->execute([$registry]);
     Admin::perform($pdo,$root,'tld.unassign',['registry_id'=>$registry,'reseller_id'=>$a,'tld'=>'co.uk'],'127.0.0.1');
     denied('tld_not_permitted',fn()=>Access::domains($pdo,$registry,$a,'domain.check',['domains'=>['example.co.uk']]));

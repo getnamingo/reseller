@@ -49,7 +49,7 @@
   <label class="form-label mb-3">Command<select class="form-select" name="command">{% for command in commands %}<option>{{ command }}</option>{% endfor %}</select></label>
   {{ forms.input('tld', 'TLD (blank for registry-wide non-term operation)', 'text', '', '', false) }}
   {{ forms.input('period', 'Years (1–10), or 0 for per operation', 'number', '0') }}{{ forms.input('amount', 'Total amount; 0 explicitly means free', 'text', '', '', false) }}{{ forms.input('currency', 'Currency', 'text', 'EUR', '', false) }}
-  <p class="text-secondary">Registration, renewal and incoming transfers need a TLD and exact total for the term. Add the TLD first. Deleting a price may expose a configured global fallback; absent prices block submission.</p><button class="btn btn-primary">Apply price change</button>
+  <p class="text-secondary">Registration, renewal and incoming transfers need a TLD and exact total for the term. Add the TLD first. Prices can only be set for domain.create, domain.create_dnssec, domain.renew, domain.restore and domain.transfer. Other commands are free unless a legacy price exists; legacy rows can still be removed. Deleting a price may expose a configured global fallback.</p><button class="btn btn-primary">Apply price change</button>
 </form></div>
 {% elseif section == 'deposits' %}
 <div class="card card-body"><h2 class="card-title">Decide a pending deposit</h2><form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">

@@ -236,8 +236,12 @@ sudo -u namingo-api php8.5 bin/manage.php tld:grant RESELLER_UUID REGISTRY_UUID 
 
 The CLI encrypts the whole normalized registry JSON before insertion. PEM material is briefly written as mode `0600` under `/run/namingo-epp-api` by a task worker and removed in `finally`.
 
-Every command needs an explicit price, including zero for free operations. Missing prices
-return `409 price_not_configured` before an EPP job or wallet hold is committed.
+Only `domain.create`, `domain.create_dnssec`, `domain.renew`, `domain.restore` and
+`domain.transfer` require an explicit price (zero is allowed). Missing prices for these
+commands return `409 price_not_configured` before an EPP job or wallet hold is committed.
+All other commands are free without a price row. Existing legacy prices remain effective,
+but the panel and CLI reject setting or updating prices for those commands; legacy rows
+can still be listed and deleted. Existing jobs retain their recorded prices.
 Domain creation (`domain.create` and `domain.create_dnssec`), renewal and incoming transfer
 requests require a zone and an exact term price. Amounts are the **total for that term**,
 not an annual amount multiplied automatically. The API derives the zone from the domain
@@ -253,10 +257,8 @@ sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.create 
 sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.create 24.00 EUR global com 2
 sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.create 10.00 EUR RESELLER_UUID com 1
 sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.create 11.00 EUR global net 1
-# Explicit free operations: repeat for each command you intend to offer for free.
-sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.check 0 EUR
-sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID contact.create 0 EUR
-sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.info 0 EUR
+# Restore is priced per operation (period 0).
+sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.restore 25.00 EUR
 # Incoming request: domain.transfer with op=request, years=1 and authInfoPw.
 sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.transfer 12.50 EUR global com 1
 # Query/cancel/approve/reject use period 0, independently of incoming request prices.
@@ -303,7 +305,7 @@ For an existing installation:
    php8.5 bin/manage.php object:assign REGISTRY_UUID host ns1.example.com RESELLER_UUID
    ```
 
-4. Configure explicit prices (including free operations) and exact zone/term totals,
+4. Configure prices for the five priced domain commands and exact zone/term totals,
    then restart the API and workers.
 
 Successful creates activate ownership; rejected creates release it. Domain deletions retain ownership in state `deleted` through redemption until a registry
@@ -500,7 +502,7 @@ rate limit; the panel does not trust client-supplied forwarding headers.
 Resellers can view their account, wallet/ledger, deposits, effective global/override
 prices, registry/TLD permissions and owned objects. Availability checks submit only
 `domain.check` through the API with the current reseller's token; results are read
-through the API too. They use the configured check price (including explicit zero),
+through the API too. They are free unless a legacy check price is configured,
 with an idempotency key per form submission. Refreshing a result only polls that job.
 The Wallet page also submits deposit requests through the API in the wallet currency.
 Keep the same request/payment reference when retrying; funds are credited only after
@@ -639,7 +641,7 @@ php8.5 bin/manage.php auth:prune
 
 TLD permissions and prices are independent: allowing a TLD does not create a price,
 and setting a price does not permit that TLD. New TLDs need both where applicable.
-Contact/host operations still need explicit configured prices, including zero.
+Contact/host operations are free unless a legacy price is configured. New prices for these operations are not supported.
 
 Run the panel suite after Composer installation against a disposable database server:
 
@@ -795,12 +797,8 @@ Content-Type: application/json
 
 Restoration remains pending until an observation confirms completion, so a report-required
 restore is not charged/completed prematurely. The original restore job stays reserved while
-its report is submitted as a linked follow-up. Configure an explicit report price, normally
-zero, for example:
-
-```bash
-php8.5 bin/manage.php price:set REGISTRY_UUID domain.restore_report 0 EUR
-```
+its report is submitted as a linked follow-up. Reports are free unless a legacy report
+price exists; new report prices are not supported.
 
 The new `domain.restore_report` command supports RFC 3915 reports for **generic/VRSN**
 profiles. It builds XML from validated actual data; it does not call the pinned client's

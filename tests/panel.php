@@ -105,7 +105,18 @@ try {
     action('price.set', array_replace($basePrice, ['scope' => $a, 'amount' => '9']));
     action('price.set', array_replace($basePrice, ['scope' => $b, 'amount' => '999']));
     action('price.set', array_replace($basePrice, ['tld' => 'net', 'amount' => '7']));
-    action('price.set', array_replace($basePrice, ['command' => 'domain.check', 'tld' => '', 'period' => '0', 'amount' => '0']));
+    foreach (CommandCatalog::all() as $entry) {
+        if (!CommandCatalog::requiresPrice($entry['command'])) {
+            denied('unsupported_price_command', fn () => action('price.set', array_replace($basePrice, ['command' => $entry['command'], 'tld' => '', 'period' => '0', 'amount' => '0'])));
+        }
+    }
+    // Old rows remain readable and removable, but cannot be updated through the panel.
+    $pdo->prepare("INSERT INTO registry_prices (registry_id, command, amount, currency) VALUES (?, 'domain.check', 0, 'EUR')")->execute([$registry]);
+    denied('unsupported_price_command', fn () => action('price.set', array_replace($basePrice, ['command' => 'domain.check', 'tld' => '', 'period' => '0', 'amount' => '1'])));
+    verify(count(array_filter(PanelData::prices($pdo, $a), fn ($p) => $p['command'] === 'domain.check')) === 1, 'Legacy prices remain visible');
+    action('price.delete', array_replace($basePrice, ['command' => 'domain.check', 'tld' => '', 'period' => '0']));
+    verify(count(array_filter(PanelData::prices($pdo, $a), fn ($p) => $p['command'] === 'domain.check')) === 0, 'Legacy prices can be removed');
+    $pdo->prepare("INSERT INTO registry_prices (registry_id, command, amount, currency) VALUES (?, 'domain.check', 0, 'EUR')")->execute([$registry]);
     denied('invalid_price_scope', fn () => action('price.set', array_replace($basePrice, ['tld' => '', 'period' => '0'])));
     denied('admin_required', fn () => Admin::perform($pdo, $a, 'user.role', ['reseller_id' => $a, 'role' => '0'], '127.0.0.1'));
     denied('invalid_state', fn () => action('user.role', ['reseller_id' => $rootUser, 'role' => '1']));

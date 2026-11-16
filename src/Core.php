@@ -591,6 +591,11 @@ final class CommandCatalog
         if ($profile !== null) { ProfileParams::validate(self::normalizeProfile($profile), $command, $params); }
     }
 
+    public static function requiresPrice(string $command): bool
+    {
+        return in_array($command, ['domain.create', 'domain.create_dnssec', 'domain.renew', 'domain.restore', 'domain.transfer'], true);
+    }
+
     public static function priceKey(string $command, array $params): array
     {
         $name = isset($params['domainname']) ? Ownership::name($params['domainname'], 'domain') : '';
@@ -853,7 +858,7 @@ final class Ledger
             if ($wallet === false) {
                 throw new RuntimeException('Wallet is missing.');
             }
-            [$price, $currency] = self::price($pdo, $registryId, $resellerId, $command, $params);
+            [$price, $currency] = self::price($pdo, $registryId, $resellerId, $command, $params, $wallet['currency']);
             if ($currency !== $wallet['currency']) {
                 throw new ApiException(409, 'currency_mismatch', 'Registry price and wallet currencies do not match.');
             }
@@ -1124,7 +1129,7 @@ final class Ledger
         }
     }
 
-    private static function price(PDO $pdo, string $registryId, string $resellerId, string $command, array $params): array
+    private static function price(PDO $pdo, string $registryId, string $resellerId, string $command, array $params, string $walletCurrency): array
     {
         [$name, $period] = CommandCatalog::priceKey($command, $params);
         $term = $period > 0;
@@ -1139,6 +1144,9 @@ final class Ledger
             $period, $name, (int) $term, $resellerId]);
         $price = $stmt->fetch();
         if ($price === false) {
+            if (!CommandCatalog::requiresPrice($command)) {
+                return ['0.0000', $walletCurrency];
+            }
             throw new ApiException(409, 'price_not_configured', 'No price is configured for this operation and term.');
         }
         return [$price['amount'], $price['currency']];

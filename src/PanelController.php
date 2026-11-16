@@ -221,7 +221,7 @@ final class PanelController
                 break;
             case '/prices':
                 $data += ['title' => 'Your prices', 'rows' => PanelData::prices($this->pdo, $id),
-                    'note' => 'Total prices for each term. Term 0 is per operation. A blank TLD covers non-term operations across the registry. The longest matching zone takes priority, then your override. Missing prices block submission.',
+                    'note' => 'Total prices for each term. Term 0 is per operation. A blank TLD covers non-term operations across the registry. The longest matching zone takes priority, then your override. Only domain.create, domain.create_dnssec, domain.renew, domain.restore and domain.transfer require prices. Other commands are free unless a legacy price exists.',
                     'columns' => ['registry' => 'Registry', 'command' => 'Operation', 'tld' => 'TLD', 'period' => 'Years / 0 per operation', 'amount' => 'Total', 'currency' => 'Currency', 'scope' => 'Source']];
                 break;
             case '/wallet':
