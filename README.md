@@ -563,10 +563,16 @@ panel sessions on their next request. API and panel logins share a persistent pe
 rate limit; the panel does not trust client-supplied forwarding headers.
 
 Resellers can view their account, wallet/ledger, deposits, effective global/override
-prices, registry/TLD permissions and owned objects. Availability checks submit only
+prices, registry/TLD permissions and owned objects. Availability checks accept mixed TLDs
+without a registry dropdown. Each domain uses
+the longest permitted configured suffix (including multi-label zones); equal matches
+across registries are reported as ambiguous. Unsupported, invalid and failed names get
+individual results without blocking other registry groups. The panel submits only
 `domain.check` through the API with the current reseller's token; results are read
-through the API too. They are always free,
-with an idempotency key per form submission. Refreshing a result only polls that job.
+through the API too. They are always free and use a stable idempotency key per form/registry group. Checks use `Prefer: respond-async`
+to queue without waiting for each registry. Refreshing results only reads existing jobs.
+The latest 10 batches remain in the current panel session; individual job links remain
+in check history. API clients still specify `registry_uuid`; automatic routing is a panel feature.
 The Wallet page also submits deposit requests through the API in the wallet currency.
 Keep the same request/payment reference when retrying; funds are credited only after
 administrator approval following independent verification of payment.

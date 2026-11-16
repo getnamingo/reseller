@@ -29,7 +29,7 @@ final class PanelApi
 
     public function check(string $token, string $registry, array $domains, string $key): array
     {
-        return $this->call('POST', 'v1/epp/domain.check', $token, ['headers' => ['Idempotency-Key' => $key],
+        return $this->call('POST', 'v1/epp/domain.check', $token, ['headers' => ['Idempotency-Key' => $key, 'Prefer' => 'respond-async'],
             'json' => ['registry_uuid' => $registry, 'params' => ['domains' => $domains]]]);
     }
 

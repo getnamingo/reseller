@@ -142,19 +142,7 @@ final class PanelController
                 return $this->redirect($response, '/jobs/' . $job['job_uuid']);
             }
             if ($path === '/checks' && $method === 'POST') {
-                $registry = $input['registry_id'] ?? null;
-                $key = $input['key'] ?? null;
-                if (!is_string($registry) || !Util::isUuid($registry) || !is_string($key) || !Util::isUuid($key)
-                    || !is_string($input['domains'] ?? null) || strlen($input['domains']) > 15000) {
-                    throw new ApiException(422, 'invalid_check', 'Choose a registry and enter up to 50 ASCII domain names.');
-                }
-                $domains = preg_split('/[\s,]+/', trim($input['domains']), -1, PREG_SPLIT_NO_EMPTY);
-                Access::domains($this->pdo, $registry, $this->user['id'], 'domain.check', ['domains' => $domains]);
-                $job = $this->api->check($_SESSION['api_token'], $registry, $domains, $key);
-                if (!is_string($job['job_uuid'] ?? null) || !Util::isUuid($job['job_uuid'])) {
-                    throw new ApiException(502, 'invalid_check', 'The API did not return a check reference.');
-                }
-                return $this->redirect($response, '/checks/' . $job['job_uuid']);
+                return $this->redirect($response, '/checks?batch=' . $this->submitChecks($input));
             }
             if ($method !== 'GET') {
                 throw new ApiException(405, 'method_not_allowed', 'This page is read-only.');
@@ -190,6 +178,84 @@ final class PanelController
             error_log('panel.request_failed type=' . get_class($e));
             return $this->render($response->withStatus(503), 'error.twig', ['title' => 'Service unavailable', 'error' => 'The request could not be completed.']);
         }
+    }
+
+    private function submitChecks(array $input): string
+    {
+        $key = $input['key'] ?? null;
+        if (!is_string($key) || !Util::isUuid($key) || !is_string($input['domains'] ?? null) || strlen($input['domains']) > 15000) {
+            throw new ApiException(422, 'invalid_check', 'Enter up to 50 ASCII domain names.');
+        }
+        $domains = preg_split('/[\s,]+/', trim($input['domains']), -1, PREG_SPLIT_NO_EMPTY);
+        if (count($domains) < 1 || count($domains) > 50) {
+            throw new ApiException(422, 'invalid_domains', 'Supply between 1 and 50 domain names.');
+        }
+        $hash = hash('sha256', Util::json($domains));
+        if (isset($_SESSION['checks'][$key])) {
+            if ($_SESSION['checks'][$key]['hash'] !== $hash) {
+                throw new ApiException(409, 'idempotency_conflict', 'This form was already submitted with different domains. Reload the page.');
+            }
+            return $key;
+        }
+        $rows = PanelData::checkRoutes($this->pdo, $this->user['id'], $domains);
+        $groups = [];
+        foreach ($rows as $row) {
+            if (isset($row['registry_id'])) { $groups[$row['registry_id']][] = $row['name']; }
+        }
+        foreach ($groups as $registry => $names) {
+            try {
+                Access::domains($this->pdo, $registry, $this->user['id'], 'domain.check', ['domains' => $names]);
+                $job = $this->api->check($_SESSION['api_token'], $registry, $names, 'check-' . hash('sha256', $key . ':' . $registry));
+                if (!is_string($job['job_uuid'] ?? null) || !Util::isUuid($job['job_uuid'])) {
+                    throw new ApiException(502, 'invalid_check', 'The API did not return a check reference.');
+                }
+                foreach ($rows as &$row) {
+                    if (($row['registry_id'] ?? null) === $registry) { $row['job_uuid'] = $job['job_uuid']; }
+                }
+                unset($row);
+            } catch (ApiException $e) {
+                foreach ($rows as &$row) {
+                    if (($row['registry_id'] ?? null) === $registry) { $row['status'] = 'Failed'; $row['reason'] = $e->getMessage(); }
+                }
+                unset($row);
+            }
+        }
+        $_SESSION['checks'][$key] = ['hash' => $hash, 'rows' => $rows];
+        $_SESSION['checks'] = array_slice($_SESSION['checks'], -10, null, true);
+        return $key;
+    }
+
+    private function checkRows(mixed $key): array
+    {
+        if (!is_string($key) || !isset($_SESSION['checks'][$key])) {
+            throw new ApiException(404, 'check_not_found', 'This batch is no longer in your session. Individual checks remain in check history.');
+        }
+        $rows = $_SESSION['checks'][$key]['rows'];
+        $jobs = [];
+        foreach ($rows as &$row) {
+            if (!isset($row['job_uuid'])) { continue; }
+            $id = $row['job_uuid'];
+            if (!isset($jobs[$id])) {
+                try { $jobs[$id] = $this->api->job($_SESSION['api_token'], $id); }
+                catch (ApiException $e) { $jobs[$id] = ['status' => 'Failed', 'result' => ['error' => $e->getMessage()]]; }
+            }
+            $job = $jobs[$id];
+            $row['status'] = ucfirst($job['status'] ?? 'unknown');
+            $row['reason'] = $job['result']['error'] ?? $job['result']['msg'] ?? $job['result']['message'] ?? '';
+            if (!is_string($row['reason'])) { $row['reason'] = ''; }
+            if (($job['status'] ?? '') !== 'succeeded') { continue; }
+            $row['status'] = 'No result';
+            foreach ($job['result']['domains'] ?? [] as $domain) {
+                if (strtolower($domain['name'] ?? '') !== $row['name']) { continue; }
+                $available = $domain['avail'] ?? null;
+                if (in_array($available, [true, 1, '1', 'true'], true)) { $row['status'] = 'Available'; }
+                elseif (in_array($available, [false, 0, '0', 'false'], true)) { $row['status'] = 'Unavailable'; }
+                $row['reason'] = is_string($domain['reason'] ?? null) ? $domain['reason'] : '';
+                break;
+            }
+        }
+        unset($row);
+        return $rows;
     }
 
     private function reseller(ResponseInterface $response, string $path, int $page, array $query = []): ResponseInterface
@@ -239,7 +305,8 @@ final class PanelController
                 break;
             case '/checks':
                 return $this->render($response, 'checks.twig', $data + ['title' => 'Domain availability', 'key' => Util::uuid(),
-                    'access' => PanelData::access($this->pdo, $id),
+                    'access' => PanelData::access($this->pdo, $id), 'batch' => $query['batch'] ?? null,
+                    'results' => isset($query['batch']) ? $this->checkRows($query['batch']) : [],
                     'jobs' => PanelData::rows($this->pdo, "SELECT id AS check_id, status, price, currency, created_at FROM epp_jobs WHERE reseller_id = ? AND command = 'domain.check' ORDER BY created_at DESC LIMIT 50", [$id])]);
             default:
                 throw new ApiException(404, 'not_found', 'Page was not found.');

@@ -207,23 +207,78 @@ try {
         verify(request('/admin/' . $section)->getStatusCode() === 403, 'Reseller cannot view admin page');
         verify(request('/admin/' . $section, 'POST', ['action' => 'user.role', 'reseller_id' => $a, 'role' => '0'])->getStatusCode() === 403, 'Reseller cannot submit admin actions');
     }
-    verify(request('/checks', 'POST', ['registry_id' => $registry, 'key' => Util::uuid(), 'domains' => 'other.net'])->getStatusCode() === 403, 'Panel check respects TLD grants');
+    verify(!str_contains(body(request('/checks')), 'name="registry_id"'), 'Availability form has no registry dropdown');
+    $unsupported = request('/checks', 'POST', ['key' => Util::uuid(), 'domains' => 'other.net']);
+    verify($unsupported->getStatusCode() === 303 && str_contains(body(request($unsupported->getHeaderLine('Location'))), 'Not supported'), 'Unpermitted TLD gets its own result');
+    verify(request('/checks', 'POST', ['key' => Util::uuid(), 'domains' => ''])->getStatusCode() === 422, 'Empty batch is rejected');
+    verify(request('/checks', 'POST', ['key' => Util::uuid(), 'domains' => implode(' ', array_fill(0, 51, 'too.com'))])->getStatusCode() === 422, 'Oversized batch is rejected');
     verify(count($history) === 0, 'Invalid panel check never calls API');
     $checkId = Util::uuid();
     $checkJob = ['job_uuid' => $checkId, 'registry_name' => 'Shared registry', 'command' => 'domain.check', 'status' => 'succeeded',
         'price' => '0.0000', 'currency' => 'EUR', 'result' => ['domains' => [['name' => 'available.com', 'avail' => true, 'reason' => ''], ['name' => 'taken.com', 'avail' => false, 'reason' => '<script>alert(1)</script>']]]];
     $mock->append(new Response(200, [], Util::json(['data' => $checkJob])));
     $key = Util::uuid();
-    $response = request('/checks', 'POST', ['registry_id' => $registry, 'key' => $key, 'domains' => "available.com\ntaken.com"]);
-    verify($response->getHeaderLine('Location') === '/checks/' . $checkId, 'Check redirects to API result');
+    $response = request('/checks', 'POST', ['key' => $key, 'domains' => "available.com\ntaken.com"]);
+    verify($response->getHeaderLine('Location') === '/checks?batch=' . $key, 'Check redirects to batch results');
     verify($history[0]['request']->getUri()->getPath() === '/v1/epp/domain.check'
         && $history[0]['request']->getHeaderLine('Authorization') === 'Bearer ' . $bearer
-        && $history[0]['request']->getHeaderLine('Idempotency-Key') === $key, 'Only availability endpoint with scoped token and idempotency key');
+        && $history[0]['request']->getHeaderLine('Idempotency-Key') === 'check-' . hash('sha256', $key . ':' . $registry)
+        && $history[0]['request']->getHeaderLine('Prefer') === 'respond-async', 'Availability endpoint uses scoped token, deterministic registry key and async submission');
     verify(json_decode((string) $history[0]['request']->getBody(), true)['params']['domains'] === ['available.com', 'taken.com'], 'Checks sent natively through API JSON');
     $mock->append(new Response(200, [], Util::json(['data' => $checkJob])));
     $result = body(request('/checks/' . $checkId));
     verify(str_contains($result, 'Available') && str_contains($result, 'Unavailable'), 'Readable check result');
     verify(!str_contains($result, '<script>alert(1)</script>') && str_contains($result, '&lt;script&gt;'), 'Registry result HTML escaped');
+    $mock->append(new Response(200, [], Util::json(['data' => $checkJob])));
+    $batchResult = body(request('/checks?batch=' . $key));
+    verify(str_contains($batchResult, 'Available') && str_contains($batchResult, 'Unavailable') && !str_contains($batchResult, '<script>'), 'Batch renders escaped per-domain availability');
+    $calls = count($history);
+    verify(request('/checks', 'POST', ['key' => $key, 'domains' => "available.com\ntaken.com"])->getStatusCode() === 303 && count($history) === $calls, 'Repeated form does not submit more jobs');
+    verify(request('/checks', 'POST', ['key' => $key, 'domains' => 'different.com'])->getStatusCode() === 409, 'Batch key cannot be reused with other input');
+    verify(request('/checks?batch=' . Util::uuid())->getStatusCode() === 404, 'Unknown session batch is rejected');
+
+    $second = action('registry.save', ['name' => 'Second registry', 'profile' => 'generic', 'config_json' => Util::json($config)]);
+    action('registry.access', ['registry_id' => $second, 'reseller_id' => $a, 'enabled' => '1']);
+    foreach (['net', 'co.uk'] as $zone) {
+        action('tld.save', ['registry_id' => $second, 'tld' => $zone, 'enabled' => '1']);
+        action('tld.access', ['registry_id' => $second, 'reseller_id' => $a, 'tld' => $zone, 'enabled' => '1']);
+    }
+    action('tld.access', ['registry_id' => $registry, 'reseller_id' => $a, 'tld' => 'co.uk', 'enabled' => '1']);
+    $routes = PanelData::checkRoutes($pdo, $a, ['UPPER.COM', 'name.co.uk', 'unknown.xyz', '<bad>']);
+    verify($routes[0]['registry_id'] === $registry && $routes[0]['name'] === 'upper.com', 'Routing normalizes case');
+    verify($routes[1]['status'] === 'Ambiguous TLD' && !isset($routes[1]['registry_id']), 'Equal registry matches are not guessed');
+    verify($routes[2]['status'] === 'Not supported' && $routes[3]['status'] === 'Invalid domain', 'Unsupported and invalid names get individual errors');
+    action('tld.access', ['registry_id' => $registry, 'reseller_id' => $a, 'tld' => 'co.uk', 'enabled' => '0']);
+    $routes = PanelData::checkRoutes($pdo, $a, ['name.co.uk']);
+    verify($routes[0]['registry_id'] === $second, 'Disabled specific zone never falls back to broader zone in same registry');
+    action('tld.access', ['registry_id' => $registry, 'reseller_id' => $a, 'tld' => 'co.uk', 'enabled' => '1']);
+    // With only a broader zone in the first registry, prefer the more specific second one.
+    $pdo->prepare('DELETE FROM reseller_tlds WHERE registry_id = ? AND tld = ?')->execute([$registry, 'co.uk']);
+    $pdo->prepare('DELETE FROM registry_tlds WHERE registry_id = ? AND tld = ?')->execute([$registry, 'co.uk']);
+    verify(PanelData::checkRoutes($pdo, $a, ['name.co.uk'])[0]['registry_id'] === $second, 'Longest multi-label suffix wins across registries');
+    action('tld.save', ['registry_id' => $registry, 'tld' => 'co.uk', 'enabled' => '1']);
+    action('tld.access', ['registry_id' => $registry, 'reseller_id' => $a, 'tld' => 'co.uk', 'enabled' => '1']);
+
+    $mixedKey = Util::uuid();
+    $pendingId = Util::uuid();
+    $mock->append(new Response(202, [], Util::json(['data' => ['job_uuid' => $pendingId]])));
+    $mock->append(new Response(503, [], Util::json(['error' => ['message' => 'Registry unavailable.']])));
+    $mixed = request('/checks', 'POST', ['key' => $mixedKey, 'domains' => 'first.com second.net unknown.xyz bad<script>']);
+    $submitted = array_slice($history, -2);
+    verify(json_decode((string) $submitted[0]['request']->getBody(), true)['registry_uuid'] === $registry
+        && json_decode((string) $submitted[1]['request']->getBody(), true)['registry_uuid'] === $second, 'Mixed TLDs submit separate registry groups');
+    verify($submitted[0]['request']->getHeaderLine('Idempotency-Key') !== $submitted[1]['request']->getHeaderLine('Idempotency-Key'), 'Registry groups have distinct stable keys');
+    $mock->append(new Response(200, [], Util::json(['data' => ['job_uuid' => $pendingId, 'command' => 'domain.check', 'status' => 'queued']])));
+    $mixedHtml = body(request($mixed->getHeaderLine('Location')));
+    verify(str_contains($mixedHtml, 'Queued') && str_contains($mixedHtml, 'Registry unavailable.') && str_contains($mixedHtml, 'Not supported') && str_contains($mixedHtml, 'Invalid domain'), 'Pending, failed, unsupported and invalid domains coexist');
+    verify(!str_contains($mixedHtml, 'bad<script>'), 'Invalid domain input is HTML escaped');
+    $mock->append(new Response(200, [], Util::json(['data' => ['job_uuid' => $pendingId, 'command' => 'domain.check', 'status' => 'rejected', 'result' => ['message' => 'Check not supported.']]])));
+    verify(str_contains(body(request('/checks?batch=' . $mixedKey)), 'Check not supported.'), 'Registry rejection appears in batch results');
+    action('registry.status', ['registry_id' => $second, 'enabled' => '0']);
+    verify(!isset(PanelData::checkRoutes($pdo, $a, ['second.net'])[0]['registry_id']), 'Disabled registry is not selected');
+    // Remove the temporary registry access so later migration fixture counts stay unchanged.
+    $pdo->prepare('DELETE FROM reseller_tlds WHERE registry_id = ?')->execute([$second]);
+    $pdo->prepare('DELETE FROM reseller_registries WHERE registry_id = ?')->execute([$second]);
     $mock->append(new Response(403, [], Util::json(['error' => ['message' => 'Job unavailable.']])));
     verify(request('/checks/' . Util::uuid())->getStatusCode() === 403, 'API denies foreign job reads');
     $mock->append(new Response(200, [], Util::json(['data' => array_replace($checkJob, ['command' => 'domain.create'])])));
@@ -257,6 +312,56 @@ try {
     $mock->append(new Response(200, [], Util::json(['data' => array_replace($transferJob, ['status' => 'succeeded'])])));
     verify(request('/lifecycle', 'POST', array_replace($restoreInput, ['command' => 'domain.transfer', 'op' => 'query']))->getStatusCode() === 303, 'Panel submits transfer query through API');
     verify(request('/lifecycle', 'POST', array_replace($restoreInput, ['command' => 'domain.transfer', 'op' => 'request']))->getStatusCode() === 422, 'Panel does not start new transfers');
+    $mock->append(new Response(200, [], Util::json(['data' => $checkJob])));
+    $batchResult = body(request('/checks?batch=' . $key));
+    verify(str_contains($batchResult, 'Available') && str_contains($batchResult, 'Unavailable') && !str_contains($batchResult, '<script>'), 'Batch renders escaped per-domain availability');
+    $calls = count($history);
+    verify(request('/checks', 'POST', ['key' => $key, 'domains' => "available.com\ntaken.com"])->getStatusCode() === 303 && count($history) === $calls, 'Repeated form does not submit more jobs');
+    verify(request('/checks', 'POST', ['key' => $key, 'domains' => 'different.com'])->getStatusCode() === 409, 'Batch key cannot be reused with other input');
+    verify(request('/checks?batch=' . Util::uuid())->getStatusCode() === 404, 'Unknown session batch is rejected');
+
+    $second = action('registry.save', ['name' => 'Second registry', 'profile' => 'generic', 'config_json' => Util::json($config)]);
+    action('registry.access', ['registry_id' => $second, 'reseller_id' => $a, 'enabled' => '1']);
+    foreach (['net', 'co.uk'] as $zone) {
+        action('tld.save', ['registry_id' => $second, 'tld' => $zone, 'enabled' => '1']);
+        action('tld.access', ['registry_id' => $second, 'reseller_id' => $a, 'tld' => $zone, 'enabled' => '1']);
+    }
+    action('tld.access', ['registry_id' => $registry, 'reseller_id' => $a, 'tld' => 'co.uk', 'enabled' => '1']);
+    $routes = PanelData::checkRoutes($pdo, $a, ['UPPER.COM', 'name.co.uk', 'unknown.xyz', '<bad>']);
+    verify($routes[0]['registry_id'] === $registry && $routes[0]['name'] === 'upper.com', 'Routing normalizes case');
+    verify($routes[1]['status'] === 'Ambiguous TLD' && !isset($routes[1]['registry_id']), 'Equal registry matches are not guessed');
+    verify($routes[2]['status'] === 'Not supported' && $routes[3]['status'] === 'Invalid domain', 'Unsupported and invalid names get individual errors');
+    action('tld.access', ['registry_id' => $registry, 'reseller_id' => $a, 'tld' => 'co.uk', 'enabled' => '0']);
+    $routes = PanelData::checkRoutes($pdo, $a, ['name.co.uk']);
+    verify($routes[0]['registry_id'] === $second, 'Disabled specific zone never falls back to broader zone in same registry');
+    action('tld.access', ['registry_id' => $registry, 'reseller_id' => $a, 'tld' => 'co.uk', 'enabled' => '1']);
+    // With only a broader zone in the first registry, prefer the more specific second one.
+    $pdo->prepare('DELETE FROM reseller_tlds WHERE registry_id = ? AND tld = ?')->execute([$registry, 'co.uk']);
+    $pdo->prepare('DELETE FROM registry_tlds WHERE registry_id = ? AND tld = ?')->execute([$registry, 'co.uk']);
+    verify(PanelData::checkRoutes($pdo, $a, ['name.co.uk'])[0]['registry_id'] === $second, 'Longest multi-label suffix wins across registries');
+    action('tld.save', ['registry_id' => $registry, 'tld' => 'co.uk', 'enabled' => '1']);
+    action('tld.access', ['registry_id' => $registry, 'reseller_id' => $a, 'tld' => 'co.uk', 'enabled' => '1']);
+
+    $mixedKey = Util::uuid();
+    $pendingId = Util::uuid();
+    $mock->append(new Response(202, [], Util::json(['data' => ['job_uuid' => $pendingId]])));
+    $mock->append(new Response(503, [], Util::json(['error' => ['message' => 'Registry unavailable.']])));
+    $mixed = request('/checks', 'POST', ['key' => $mixedKey, 'domains' => 'first.com second.net unknown.xyz bad<script>']);
+    $submitted = array_slice($history, -2);
+    verify(json_decode((string) $submitted[0]['request']->getBody(), true)['registry_uuid'] === $registry
+        && json_decode((string) $submitted[1]['request']->getBody(), true)['registry_uuid'] === $second, 'Mixed TLDs submit separate registry groups');
+    verify($submitted[0]['request']->getHeaderLine('Idempotency-Key') !== $submitted[1]['request']->getHeaderLine('Idempotency-Key'), 'Registry groups have distinct stable keys');
+    $mock->append(new Response(200, [], Util::json(['data' => ['job_uuid' => $pendingId, 'command' => 'domain.check', 'status' => 'queued']])));
+    $mixedHtml = body(request($mixed->getHeaderLine('Location')));
+    verify(str_contains($mixedHtml, 'Queued') && str_contains($mixedHtml, 'Registry unavailable.') && str_contains($mixedHtml, 'Not supported') && str_contains($mixedHtml, 'Invalid domain'), 'Pending, failed, unsupported and invalid domains coexist');
+    verify(!str_contains($mixedHtml, 'bad<script>'), 'Invalid domain input is HTML escaped');
+    $mock->append(new Response(200, [], Util::json(['data' => ['job_uuid' => $pendingId, 'command' => 'domain.check', 'status' => 'rejected', 'result' => ['message' => 'Check not supported.']]])));
+    verify(str_contains(body(request('/checks?batch=' . $mixedKey)), 'Check not supported.'), 'Registry rejection appears in batch results');
+    action('registry.status', ['registry_id' => $second, 'enabled' => '0']);
+    verify(!isset(PanelData::checkRoutes($pdo, $a, ['second.net'])[0]['registry_id']), 'Disabled registry is not selected');
+    // Remove the temporary registry access so later migration fixture counts stay unchanged.
+    $pdo->prepare('DELETE FROM reseller_tlds WHERE registry_id = ?')->execute([$second]);
+    $pdo->prepare('DELETE FROM reseller_registries WHERE registry_id = ?')->execute([$second]);
     $mock->append(new Response(403, [], Util::json(['error' => ['message' => 'Job unavailable.']])));
     verify(request('/jobs/' . Util::uuid())->getStatusCode() === 403, 'Job details preserve API owner isolation');
     $pdo->prepare("UPDATE object_ownership SET domain_state = 'active' WHERE registry_id = ? AND object_name = 'own.com'")->execute([$registry]);

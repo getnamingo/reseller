@@ -26,6 +26,46 @@ final class PanelData
             WHERE rr.reseller_id = ? ORDER BY r.name, t.tld', [$reseller]);
     }
 
+    public static function checkRoutes(PDO $pdo, string $reseller, array $domains): array
+    {
+        $access = self::access($pdo, $reseller);
+        $rows = [];
+        foreach ($domains as $domain) {
+            $row = ['name' => $domain, 'status' => 'Not supported', 'reason' => 'TLD is not supported or not permitted.'];
+            try {
+                $row['name'] = Ownership::name($domain, 'domain');
+            } catch (ApiException $e) {
+                $rows[] = array_replace($row, ['status' => 'Invalid domain', 'reason' => $e->getMessage()]);
+                continue;
+            }
+            $matches = [];
+            foreach ($access as $item) {
+                if ($item['registry_enabled'] && $item['access_enabled'] && $item['tld'] !== null
+                    && str_ends_with($row['name'], '.' . $item['tld'])
+                    && strlen($item['tld']) > strlen($matches[$item['registry_id']]['tld'] ?? '')) {
+                    // Keep each registry's most specific zone, even if its grant is disabled.
+                    $matches[$item['registry_id']] = $item;
+                }
+            }
+            $matches = array_filter($matches, fn ($item) => $item['tld_enabled'] && $item['permitted']);
+            if ($matches !== []) {
+                $longest = max(array_map(fn ($item) => strlen($item['tld']), $matches));
+                $matches = array_filter($matches, fn ($item) => strlen($item['tld']) === $longest);
+                if (count($matches) === 1) {
+                    $match = reset($matches);
+                    $row += ['registry_id' => $match['registry_id'], 'registry' => $match['registry']];
+                    $row['status'] = 'Queued';
+                    $row['reason'] = '';
+                } else {
+                    $row['status'] = 'Ambiguous TLD';
+                    $row['reason'] = 'More than one permitted registry serves this TLD. Ask an administrator to resolve the overlap.';
+                }
+            }
+            $rows[] = $row;
+        }
+        return $rows;
+    }
+
     public static function prices(PDO $pdo, string $reseller, array $filters = [], ?int $limit = null, int $offset = 0): array
     {
         $sql = "SELECT r.name AS registry, p.registry_id, p.command, p.tld, p.period,
