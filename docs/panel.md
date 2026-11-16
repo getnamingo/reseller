@@ -327,3 +327,43 @@ php8.5 bin/manage.php migrate
 The migration adds one `panel_contacts` table without changing existing ownership or EPP job tables. Fresh installs include it in `database/schema.sql`. It does not contact any registries or invent contact data during migration.
 
 Run `php8.5 tests/contacts.php` with the same disposable-database `TEST_MYSQL_*` settings as the other suites. It covers authorization, encrypted data/JSON mappings, extra parameters, registry-generated IDs, updates, sync, partial deletion, outstanding-job recovery, discovery, pagination and migration. `node tests/contacts.js` checks polling and unsaved changes; `php8.5 tests/panel_router.php` verifies that the new asset is also served by the documented development router. Registry responses are simulated; no live EPP commands are sent by these tests.
+
+
+## Domain management
+
+Both menus now open a paginated domain table: `/domains` contains the signed-in account's domains, while `/admin/domains` allows administrators to manage every reseller's domains. Administrators using the reseller menu still see only their own account. Ownership, registry/TLD grants and wholesale billing remain enforced by the existing API ledger, including when an administrator acts for a reseller.
+
+**Create domain** opens a header modal. Enter one name or up to 50 ASCII/punycode names separated by spaces, commas or lines. Each name is routed by its longest permitted TLD using the same rules as availability checks; unsupported or ambiguous routes produce individual errors. The selected years, registry contact IDs, five nameservers and up to two DS records apply to every bulk member. Contact roles are optional in the form; the target registry's policy and native serializer decide which are required. Registration generates a separate authorization code for each domain. Supplying DS records selects `domain.create_dnssec`, which uses normal registration pricing.
+
+Open a domain to view synced creation/expiry/update dates, statuses and contact/nameserver data. Separate cards submit the existing API commands for contact/registrant changes, nameserver replacement, DNSSEC add/remove/replace, authorization code changes, statuses, renewal and deletion. Registrant changes use `domain.update_contact` with `contacttype=registrant`. A transfer/restore card accepts the native parameters for transfer follow-ups, restore and restore reports. Jobs and their native EPP codes/messages remain available; a successful HTTP submission is not proof of registry success.
+
+Additional registry parameters accept a JSON object, using the same field names/types as the API (for example EE documents, IS card fields or an owned FRED `nsid`). The domain name and the structured form fields take precedence. See `GET /v1/commands`, the API guide and `src/ProfileParams.php` for profile contracts.
+
+Nameserver adapters follow the pinned Tembo version:
+- EE/EU/FI/GE/HR/IT/LT/LV receive `nss` host attributes, including optional IPv4/IPv6 glue.
+- Host-object profiles check each host and create an available host before submitting the domain command. Bulk members wait on the same host reservation and reuse the completed host, even if all availability checks initially reported it available. An existing public host is referenced without importing ownership. Their host-create serializer accepts one glue address per host; supplying both is rejected instead of dropping one.
+- FRED creates a two-host NSSET first, unless an existing owned `nsid` is supplied. Its pinned `domainUpdateNS` implementation does not change NSSET associations, so the panel reports this limitation explicitly.
+- The library/registry may reject unavailable commands, unsupported terms or glue for an unregistered parent domain. Those errors are retained. A domain with more than five returned nameservers must be edited through the API to preserve its complete set.
+
+One new table, `panel_domain_operations`, stores encrypted immutable command plans, auth codes and results. Saved host/domain sequences continue on the API service's five-second timer even when the browser closes. Stable per-step idempotency keys recover jobs after a crash between ledger commit and local bookkeeping. Outstanding/unknown operations block fresh requests for that domain, except follow-ups explicitly permitted by the API lifecycle rules (including restore reports, permitted sync, and transfer query/cancel). Uncertain outcomes need registrar reconciliation. Each step has its own outcome: later failures do not roll back successful earlier steps. The browser polls for results, retries transient read failures, and preserves unsaved forms.
+
+Apply migration **007_panel_domains**, rebuild Composer's authoritative classmap, and restart both services before using the new pages:
+
+```bash
+cd /opt/namingo-reseller-api
+sudo env COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --classmap-authoritative
+sudo -u namingo-api php8.5 bin/manage.php migrate
+sudo systemctl restart namingo-reseller-api php8.5-fpm
+```
+
+Use the normal upgrade script for installer-created installations; it handles dependency generation, schema permissions, migration and service restart. Manual migrations need the documented temporary schema privileges. Migration `database/007_panel_domains.sql` is also supplied separately and is safe to reapply.
+
+Regression checks (use a disposable database with the documented `TEST_MYSQL_*` settings):
+```bash
+php8.5 tests/domain_params.php
+php8.5 tests/domains.php
+node tests/domains.js
+php8.5 tests/panel_router.php
+```
+
+These fixtures simulate registry replies; live registry behavior must be checked in the registrar's test environments.

@@ -73,13 +73,10 @@ final class PanelController
                 if ($admin && (int) $this->user['role'] !== 0) { throw new ApiException(403, 'admin_required', 'Administrator access is required.'); }
                 return $this->contacts($request, $response, $admin, $match[2] ?? null, $input, $ip);
             }
-            if ($path === '/admin/domains') {
-                if ((int) $this->user['role'] !== 0) { throw new ApiException(403, 'admin_required', 'Administrator access is required.'); }
-                if ($method !== 'GET') { throw new ApiException(405, 'method_not_allowed', 'Use GET for domain listings.'); }
-                $page = $this->page($request); $offset = ($page - 1) * 50;
-                return $this->render($response, 'table.twig', $this->pagination(['title' => 'All domains', 'section' => 'domains', 'path' => $path, 'page' => $page, 'paginate' => true,
-                    'rows' => PanelData::rows($this->pdo, "SELECT o.object_name, u.username, r.name AS registry, o.active, o.domain_state, o.job_id FROM object_ownership o JOIN registries r ON r.id = o.registry_id JOIN resellers u ON u.id = o.reseller_id WHERE o.object_type = 'domain' ORDER BY o.object_name, o.registry_id LIMIT 51 OFFSET {$offset}"),
-                    'columns' => ['object_name' => 'Domain', 'username' => 'Reseller', 'registry' => 'Registry', 'active' => 'Active', 'domain_state' => 'Domain state', 'job_id' => 'Pending job']]));
+            if (preg_match('#^(/admin)?/domains(?:/([a-f0-9-]{36})/([a-zA-Z0-9.-]+))?$#D', $path, $match)) {
+                $admin = ($match[1] ?? '') === '/admin';
+                if ($admin && (int) $this->user['role'] !== 0) { throw new ApiException(403, 'admin_required', 'Administrator access is required.'); }
+                return $this->domains($request, $response, $admin, $match[2] ?? null, $match[3] ?? null, $input, $ip);
             }
             if (str_starts_with($path, '/admin/')) {
                 if ((int) $this->user['role'] !== 0) {
@@ -222,6 +219,50 @@ final class PanelController
             error_log('panel.request_failed type=' . get_class($e));
             return $this->render($response->withStatus(503), 'error.twig', ['title' => 'Service unavailable', 'error' => 'The request could not be completed.']);
         }
+    }
+
+
+    private function domains(ServerRequestInterface $request, ResponseInterface $response, bool $admin, ?string $registry, ?string $name, array $input, string $ip): ResponseInterface
+    {
+        $path = $admin ? '/admin/domains' : '/domains';
+        $actor = $admin ? $this->user : array_replace($this->user, ['role' => 1]);
+        $domain = $registry === null ? null : Domains::owned($this->pdo, $actor, $registry, $name);
+        $url = $domain === null ? $path : $path . '/' . $domain['registry_id'] . '/' . $domain['object_name'];
+        if ($request->getMethod() === 'POST') {
+            $batch = Domains::submit($this->pdo, $actor, $input, $ip, $domain);
+            return $this->redirect($response, $url . '?batch=' . $batch);
+        }
+        $batch = $request->getQueryParams()['batch'] ?? null;
+        if ($batch !== null && (!is_string($batch) || !Util::isUuid($batch))) { throw new ApiException(422, 'invalid_batch', 'Invalid operation reference.'); }
+        $active = Domains::refresh($this->pdo, $actor, $batch);
+        $ops = Domains::operations($this->pdo, $actor, $batch, $domain);
+        if ($domain !== null && $ops === [] && $batch === null && $domain['active'] && $domain['job_id'] === null) {
+            Domains::submit($this->pdo, $actor, ['key' => Util::uuid(), 'action' => 'sync'], $ip, $domain);
+            $ops = Domains::operations($this->pdo, $actor, null, $domain);
+        }
+        $public = Domains::publicOperations($ops);
+        $version = hash('sha256', Util::json($public));
+        $pending = array_filter(array_merge($ops, $active), fn ($o) => in_array($o['status'], ['prepared', 'queued', 'processing', 'pending'], true)) !== [];
+        if (($request->getQueryParams()['format'] ?? '') === 'json') {
+            $response->getBody()->write(Util::json(['version' => $version, 'pending' => $pending]));
+            return $response->withHeader('Content-Type', 'application/json')->withHeader('Cache-Control', 'no-store');
+        }
+        $data = ['title' => $admin ? 'Manage domains' : 'Your domains', 'section' => $admin ? 'domains' : null,
+            'path' => $path, 'url' => $url, 'key' => Util::uuid(), 'operations' => $public, 'pending' => $pending,
+            'version' => $version, 'batch' => $batch, 'page' => $this->page($request),
+            'resellers' => $admin ? PanelData::rows($this->pdo, 'SELECT id, username FROM resellers ORDER BY username') : []];
+        if ($domain !== null) {
+            $allOps = $batch === null ? $ops : Domains::operations($this->pdo, $actor, null, $domain);
+            $info = Domains::info($allOps); $contacts = [];
+            foreach ($info['contact'] ?? [] as $contact) {
+                if (is_array($contact) && isset($contact['type'], $contact['id'])) { $contacts[$contact['type']] = $contact['id']; }
+            }
+            $data += ['domain' => $domain, 'info' => $info, 'contact_ids' => $contacts, 'hosts' => array_values($info['ns'] ?? []),
+                'title' => 'Manage ' . $domain['object_name']];
+            $data['title'] = 'Manage ' . $domain['object_name'];
+            return $this->render($response, 'domain.twig', $data);
+        }
+        return $this->render($response, 'domains.twig', $data + Domains::listing($this->pdo, $actor, $data['page']) + ['paginate' => true]);
     }
 
     private function contacts(ServerRequestInterface $request, ResponseInterface $response, bool $admin, ?string $id, array $input, string $ip): ResponseInterface
@@ -393,13 +434,7 @@ final class PanelController
                     'columns' => ['kind' => 'Type', 'available_delta' => 'Available change', 'held_delta' => 'Held change', 'available_after' => 'Available after', 'held_after' => 'Held after', 'currency' => 'Currency', 'description' => 'Description', 'created_at' => 'Date'],
                     'deposits' => PanelData::rows($this->pdo, 'SELECT id, client_reference, amount, currency, status, created_at FROM deposit_requests WHERE reseller_id = ? ORDER BY created_at DESC LIMIT 50', [$id]), 'deposit_reference' => Util::uuid(), 'paginate' => true];
                 break;
-            case '/domains':
-                $data += ['title' => 'Your domains', 'rows' => PanelData::rows($this->pdo,
-                    "SELECT o.registry_id, o.object_type, o.object_name, r.name AS registry, o.active, o.domain_state, o.job_id FROM object_ownership o JOIN registries r ON r.id = o.registry_id WHERE o.reseller_id = ? AND o.object_type = 'domain' ORDER BY o.object_name, o.registry_id LIMIT 51 OFFSET {$offset}", [$id]),
-                    'columns' => ['object_name' => 'Domain', 'registry' => 'Registry', 'active' => 'Active', 'domain_state' => 'Domain state', 'job_id' => 'Pending job', 'restore_key' => 'Restore'], 'paginate' => true];
-                foreach ($data['rows'] as &$object) { $object['restore_key'] = Util::uuid(); }
-                unset($object);
-                break;
+
             case '/checks':
                 $results = isset($query['batch']) ? $this->checkRows($query['batch']) : [];
                 $pending = array_filter($results, fn ($row) => in_array($row['status'], ['Queued', 'Processing', 'Pending'], true)) !== [];
