@@ -1,0 +1,5 @@
+{% import 'partials/forms.twig' as forms %}
+<div class="modal modal-blur fade" id="add-tld" tabindex="-1" aria-labelledby="add-tld-title" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><form method="post" class="modal-content">{{ forms.hidden('tld.save', csrf) }}
+<div class="modal-header"><h2 class="modal-title" id="add-tld-title">Add TLD{% if registry is defined %} — {{ registry.name }}{% endif %}</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+<div class="modal-body">{% if registry is not defined %}{{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{% endif %}{{ forms.input('tld', 'TLD / suffix (com or co.uk)') }}{{ forms.enabled() }}<p class="text-secondary">Existing suffixes update their state. To correct an unused suffix, remove it and add the corrected one.</p></div>
+<div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary">Save TLD</button></div></form></div></div>

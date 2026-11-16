@@ -16,7 +16,7 @@ final class PanelController
     private ?array $user = null;
     private const SECTIONS = [
         'resellers' => ['user.create', 'user.update', 'user.password', 'user.status', 'user.role', 'tokens.revoke'],
-        'registries' => ['registry.save', 'registry.status', 'registry.access'],
+        'registries' => ['registry.save', 'registry.status', 'registry.access', 'tld.save'],
         'tlds' => ['tld.save', 'tld.access', 'tld.delete', 'tld.unassign'],
         'prices' => ['price.set', 'price.batch', 'price.delete'],
         'deposits' => ['deposit.approve', 'deposit.reject'],
@@ -72,6 +72,28 @@ final class PanelController
                 if ((int) $this->user['role'] !== 0) {
                     throw new ApiException(403, 'admin_required', 'Administrator access is required.');
                 }
+                if ($path === '/admin/tlds' && $method === 'GET') {
+                    return $this->redirect($response, '/admin/registries');
+                }
+                if (preg_match('#^/admin/registries/([a-f0-9-]{36})(?:/(tlds|permissions))?$#D', $path, $match)) {
+                    $registry = PanelData::rows($this->pdo, 'SELECT id, name, profile, enabled FROM registries WHERE id = ?', [$match[1]])[0] ?? null;
+                    if ($registry === null) { throw new ApiException(404, 'registry_not_found', 'Registry was not found.'); }
+                    $view = $match[2] ?? 'edit';
+                    if ($method === 'POST') {
+                        $allowed = match ($view) {
+                            'edit' => ['registry.save', 'registry.status', 'registry.access'],
+                            'tlds' => ['tld.save', 'tld.delete'],
+                            'permissions' => ['tld.access', 'tld.unassign'],
+                        };
+                        $action = $input['action'] ?? '';
+                        if (!in_array($action, $allowed, true)) { throw new ApiException(422, 'invalid_action', 'Choose an action offered on this registry page.'); }
+                        Admin::perform($this->pdo, $this->user['id'], $action, array_replace($input, ['registry_id' => $registry['id']]), $ip);
+                        $_SESSION['flash'] = 'Registry settings saved.';
+                        $page = $this->page($request);
+                        return $this->redirect($response, $path . ($page > 1 ? '?page=' . $page : ''));
+                    }
+                    return $this->registryPage($response, $registry, $view, $this->page($request), $path);
+                }
                 if (preg_match('#^/admin/resellers/([a-f0-9-]{36})$#D', $path, $match)) {
                     $accounts = PanelData::rows($this->pdo, 'SELECT id, username, display_name, company, email, phone, address, country_code, currency, status, role FROM resellers WHERE id = ?', [$match[1]]);
                     if ($accounts === []) { throw new ApiException(404, 'user_not_found', 'Reseller was not found.'); }
@@ -101,6 +123,9 @@ final class PanelController
                     $action = $input['action'] ?? null;
                     if (!in_array($action, self::SECTIONS[$section], true)) {
                         throw new ApiException(422, 'invalid_action', 'Choose an action offered on this page.');
+                    }
+                    if ($section === 'registries' && $action === 'registry.save' && ($input['registry_id'] ?? '') !== '') {
+                        throw new ApiException(422, 'invalid_action', 'Open the registry edit page to update an existing registry.');
                     }
                     $id = Admin::perform($this->pdo, $this->user['id'], $action, $input, $ip);
                     $_SESSION['flash'] = 'Saved. Reference: ' . $id;
@@ -341,6 +366,24 @@ final class PanelController
         return $this->render($response, 'table.twig', $this->pagination($data));
     }
 
+    private function registryPage(ResponseInterface $response, array $registry, string $view, int $page, string $path): ResponseInterface
+    {
+        $offset = ($page - 1) * 50;
+        $id = $registry['id'];
+        $sql = match ($view) {
+            'edit' => 'SELECT rr.reseller_id, u.username, rr.enabled FROM reseller_registries rr JOIN resellers u ON u.id = rr.reseller_id WHERE rr.registry_id = ? ORDER BY u.username',
+            'tlds' => 'SELECT tld, enabled FROM registry_tlds WHERE registry_id = ? ORDER BY tld',
+            'permissions' => 'SELECT rt.reseller_id, u.username, rt.tld, rt.enabled FROM reseller_tlds rt JOIN resellers u ON u.id = rt.reseller_id WHERE rt.registry_id = ? ORDER BY u.username, rt.tld',
+        };
+        $data = ['title' => match ($view) { 'edit' => 'Manage registry: ', 'tlds' => 'TLDs: ', 'permissions' => 'TLD permissions: ' } . $registry['name'],
+            'section' => 'registries', 'registry' => $registry, 'view' => $view, 'page' => $page, 'path' => $path, 'paginate' => true,
+            'rows' => PanelData::rows($this->pdo, $sql . " LIMIT 51 OFFSET {$offset}", [$id]),
+            'profiles' => CommandCatalog::profiles(),
+            'resellers' => PanelData::rows($this->pdo, 'SELECT id, username FROM resellers ORDER BY username LIMIT 500'),
+            'tlds' => PanelData::rows($this->pdo, 'SELECT tld FROM registry_tlds WHERE registry_id = ? ORDER BY tld', [$id])];
+        return $this->render($response, 'registry.twig', $this->pagination($data));
+    }
+
     private function admin(ResponseInterface $response, string $section, int $page): ResponseInterface
     {
         $offset = ($page - 1) * 50;
@@ -348,8 +391,6 @@ final class PanelController
             'resellers' => ['SELECT r.id AS account_id, r.username, r.display_name, r.company, r.email, r.role, r.status, r.currency, w.available_balance, w.held_balance FROM resellers r JOIN wallets w ON w.reseller_id = r.id ORDER BY r.username',
                 ['account_id' => 'Reseller', 'display_name' => 'Name', 'company' => 'Company', 'email' => 'Email', 'role' => 'Role', 'status' => 'Status', 'currency' => 'Currency', 'available_balance' => 'Available', 'held_balance' => 'Held']],
             'registries' => ['SELECT id, name, profile, enabled FROM registries ORDER BY name', ['id' => 'UUID', 'name' => 'Registry', 'profile' => 'Profile', 'enabled' => 'Enabled']],
-            'tlds' => ['SELECT t.registry_id, r.name AS registry, t.tld, t.enabled FROM registry_tlds t JOIN registries r ON r.id = t.registry_id ORDER BY r.name, t.tld',
-                ['registry_id' => 'Registry UUID', 'registry' => 'Registry', 'tld' => 'TLD', 'enabled' => 'Enabled', 'tld_actions' => 'Edit / remove']],
             'prices' => ["SELECT p.registry_id, r.name AS registry_name, COALESCE(u.username, 'Global defaults') AS scope_name,
                 CASE WHEN p.reseller_id = '" . CommandCatalog::GLOBAL_PRICE_UUID . "' THEN 'global' ELSE p.reseller_id END AS scope,
                 p.command, p.tld, p.period, p.amount, p.currency FROM registry_prices p JOIN registries r ON r.id = p.registry_id
@@ -370,17 +411,6 @@ final class PanelController
         if ($section === 'prices') {
             $data['price_operations'] = CommandCatalog::priceOperations();
             $data['price_zones'] = PanelData::rows($this->pdo, 'SELECT t.registry_id, t.tld, r.name AS registry FROM registry_tlds t JOIN registries r ON r.id = t.registry_id ORDER BY r.name, t.tld');
-        }
-        if ($section === 'registries') {
-            $data['grants'] = PanelData::rows($this->pdo, 'SELECT u.username, r.name AS registry, rr.enabled
-                FROM reseller_registries rr JOIN resellers u ON u.id = rr.reseller_id JOIN registries r ON r.id = rr.registry_id
-                ORDER BY rr.created_at DESC LIMIT 100');
-            $data['grant_columns'] = ['username' => 'Reseller', 'registry' => 'Registry', 'enabled' => 'Permitted'];
-        } elseif ($section === 'tlds') {
-            $data['grants'] = PanelData::rows($this->pdo, 'SELECT u.username, rt.reseller_id, rt.registry_id, r.name AS registry, rt.tld, rt.enabled
-                FROM reseller_tlds rt JOIN resellers u ON u.id = rt.reseller_id JOIN registries r ON r.id = rt.registry_id
-                ORDER BY u.username, r.name, rt.tld LIMIT 100');
-            $data['grant_columns'] = ['username' => 'Reseller', 'registry' => 'Registry', 'tld' => 'TLD', 'enabled' => 'Permitted', 'grant_actions' => 'Remove assignment'];
         }
         return $this->render($response, 'admin.twig', $this->pagination($data));
     }

@@ -462,7 +462,8 @@ try {
     verify(substr_count($secondAccounts, 'class="fw-semibold" href="/admin/resellers/') === 4 && str_contains($secondAccounts, 'Previous'), 'Reseller table pagination exposes remaining accounts');
     $pdo->exec("DELETE FROM wallets WHERE reseller_id IN (SELECT id FROM resellers WHERE username LIKE 'paging-demo-%')");
     $pdo->exec("DELETE FROM resellers WHERE username LIKE 'paging-demo-%'");
-    $tldHtml = body(request('/admin/tlds'));
+    $tldHtml = body(request('/admin/registries/' . $registry . '/tlds')) . body(request('/admin/registries/' . $registry . '/permissions'));
+    verify(request('/admin/tlds')->getHeaderLine('Location') === '/admin/registries', 'Old standalone TLD page redirects to registries');
     verify(str_contains($tldHtml, 'value="tld.delete"') && str_contains($tldHtml, 'Remove unused TLD') && str_contains($tldHtml, 'value="tld.unassign"'), 'TLD table offers removal, state and assignment controls');
     verify(request('/admin/tlds', 'POST', ['action' => 'tld.delete', 'registry_id' => $registry, 'tld' => 'com'])->getStatusCode() === 422, 'TLD removal requires explicit form confirmation');
     verify(request('/admin/tlds', 'POST', ['action' => 'tld.delete', 'registry_id' => $registry, 'tld' => 'com', 'confirmed' => '1'])->getStatusCode() === 409, 'Panel blocks removal of used TLD');
@@ -471,7 +472,7 @@ try {
     verify(request('/admin/tlds', 'POST', ['action' => 'tld.save', 'registry_id' => $emptyRegistry, 'tld' => 'test', 'enabled' => '0'])->getStatusCode() === 303, 'Panel edits TLD state');
     verify(request('/admin/tlds', 'POST', ['action' => 'tld.delete', 'registry_id' => $emptyRegistry, 'tld' => 'test', 'confirmed' => '1'])->getStatusCode() === 303, 'Panel removes unused TLD');
     foreach (['resellers', 'registries', 'tlds', 'prices', 'deposits', 'jobs', 'ownership'] as $section) {
-        verify(request('/admin/' . $section)->getStatusCode() === 200, 'Admin page renders: ' . $section);
+        verify(request('/admin/' . $section)->getStatusCode() === ($section === 'tlds' ? 303 : 200), 'Admin page renders or redirects: ' . $section);
     }
     verify(str_contains(body(request('/admin/jobs')), '/admin/jobs/' . $foreignJob['job_id']), 'Admin job table links to job details');
     Ledger::completeJob($pdo, $foreignJob['job_id'], 'rejected', ['code' => 2304, 'message' => '<script>registry failure</script>'], 2304);

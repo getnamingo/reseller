@@ -661,6 +661,28 @@ the updated API/panel. Existing accounts receive empty optional details. Run
 `tests/admin_editing.php` with the documented `TEST_MYSQL_*` settings to verify account
 editing, token behavior, CLI commands, migration and safe TLD removal.
 
+### Managing registries, TLDs and permissions
+
+**Administration → Registries** focuses on the paginated registry table. Header buttons
+open Tabler modals to **Add a registry** (no existing-UUID field) or **Add TLD**. Each
+registry row links to **Edit registry**, **TLDs** and **TLD permissions**.
+
+The registry edit page preloads its name/profile, accepts a full replacement configuration
+JSON without revealing encrypted credentials, and includes a state toggle plus a separate
+reseller access card accepting any reseller UUID. Its paginated permission table contains
+only that registry's records, with permit/revoke toggles.
+
+The TLD page lists that registry's suffixes with colored enable/disable buttons, an Add
+TLD modal and the existing guarded unused-TLD removal controls. The TLD permissions page
+has a **Permit a TLD** modal, a scoped paginated table, colored enable/disable buttons and
+permission-removal controls. Toggles retain the current page. Registry UUIDs come from
+the URL on these pages and cannot be redirected by submitted form values.
+
+The standalone TLDs navigation/page is removed; `/admin/tlds` redirects to Registries.
+Legacy POST actions at that URL remain accepted for compatibility. Runtime permission
+checks and removal safeguards remain unchanged. Run `php8.5 tests/registries.php` with
+the documented `TEST_MYSQL_*` environment for the registry-management regression suite.
+
 ### Managing resellers
 
 **Administration → Resellers** focuses on the account table (50 accounts per page).
