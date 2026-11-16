@@ -122,14 +122,16 @@ try {
     check(Ledger::fetchJob($pdo, $j['job_id'])['currency'] === 'USD', 'Free job uses non-EUR wallet currency');
     finish($j);
     $pdo->prepare("UPDATE wallets SET currency = 'EUR' WHERE reseller_id = ?")->execute([$b]);
-    price('domain.check', '2');
+    $balanceBefore = $pdo->query("SELECT available_balance FROM wallets WHERE reseller_id = '$a'")->fetchColumn();
+    price('domain.check', '2000', '', 0, null, 'USD');
     $j = job($a, 'domain.check', ['domains' => ['legacy.com']]);
-    check(Ledger::fetchJob($pdo, $j['job_id'])['price'] === '2.0000', 'Legacy nonzero price is honored');
+    check(Ledger::fetchJob($pdo, $j['job_id'])['price'] === '0.0000', 'Legacy nonzero price is ignored');
     finish($j);
     price('domain.check', '3', '', 0, $a);
     $j = job($a, 'domain.check', ['domains' => ['legacy.com']]);
-    check(Ledger::fetchJob($pdo, $j['job_id'])['price'] === '3.0000', 'Legacy reseller override is honored');
+    check(Ledger::fetchJob($pdo, $j['job_id'])['price'] === '0.0000', 'Legacy reseller override is ignored');
     finish($j);
+    check($pdo->query("SELECT available_balance FROM wallets WHERE reseller_id = '$a'")->fetchColumn() === $balanceBefore, 'Ignored prices never hold or charge funds');
     $pdo->prepare("DELETE FROM registry_prices WHERE command = 'domain.check'")->execute();
     price('domain.create', '1'); // Legacy catch-all must never price a term operation.
     denied('price_not_configured', fn () => job($a, 'domain.create', ['domainname' => 'absent.com', 'period' => 1]));

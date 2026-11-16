@@ -1131,6 +1131,9 @@ final class Ledger
 
     private static function price(PDO $pdo, string $registryId, string $resellerId, string $command, array $params, string $walletCurrency): array
     {
+        if (!CommandCatalog::requiresPrice($command)) {
+            return ['0.0000', $walletCurrency];
+        }
         [$name, $period] = CommandCatalog::priceKey($command, $params);
         $term = $period > 0;
         $stmt = $pdo->prepare(
@@ -1144,9 +1147,6 @@ final class Ledger
             $period, $name, (int) $term, $resellerId]);
         $price = $stmt->fetch();
         if ($price === false) {
-            if (!CommandCatalog::requiresPrice($command)) {
-                return ['0.0000', $walletCurrency];
-            }
             throw new ApiException(409, 'price_not_configured', 'No price is configured for this operation and term.');
         }
         return [$price['amount'], $price['currency']];

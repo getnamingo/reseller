@@ -239,9 +239,9 @@ The CLI encrypts the whole normalized registry JSON before insertion. PEM materi
 Only `domain.create`, `domain.create_dnssec`, `domain.renew`, `domain.restore` and
 `domain.transfer` require an explicit price (zero is allowed). Missing prices for these
 commands return `409 price_not_configured` before an EPP job or wallet hold is committed.
-All other commands are free without a price row. Existing legacy prices remain effective,
-but the panel and CLI reject setting or updating prices for those commands; legacy rows
-can still be listed and deleted. Existing jobs retain their recorded prices.
+All other commands are free, even if old price rows exist. These rows are ignored and
+excluded from reseller/API price lists. The panel and CLI reject adding or updating
+them; administrators can still list and delete them. Existing jobs retain their recorded prices.
 Domain creation (`domain.create` and `domain.create_dnssec`), renewal and incoming transfer
 requests require a zone and an exact term price. Amounts are the **total for that term**,
 not an annual amount multiplied automatically. The API derives the zone from the domain
@@ -502,7 +502,7 @@ rate limit; the panel does not trust client-supplied forwarding headers.
 Resellers can view their account, wallet/ledger, deposits, effective global/override
 prices, registry/TLD permissions and owned objects. Availability checks submit only
 `domain.check` through the API with the current reseller's token; results are read
-through the API too. They are free unless a legacy check price is configured,
+through the API too. They are always free,
 with an idempotency key per form submission. Refreshing a result only polls that job.
 The Wallet page also submits deposit requests through the API in the wallet currency.
 Keep the same request/payment reference when retrying; funds are credited only after
@@ -641,7 +641,7 @@ php8.5 bin/manage.php auth:prune
 
 TLD permissions and prices are independent: allowing a TLD does not create a price,
 and setting a price does not permit that TLD. New TLDs need both where applicable.
-Contact/host operations are free unless a legacy price is configured. New prices for these operations are not supported.
+Contact/host operations are always free; old prices are ignored and new prices are not supported.
 
 Run the panel suite after Composer installation against a disposable database server:
 
@@ -797,8 +797,8 @@ Content-Type: application/json
 
 Restoration remains pending until an observation confirms completion, so a report-required
 restore is not charged/completed prematurely. The original restore job stays reserved while
-its report is submitted as a linked follow-up. Reports are free unless a legacy report
-price exists; new report prices are not supported.
+its report is submitted as a linked follow-up. Reports are always free; old report prices are
+ignored and new report prices are not supported.
 
 The new `domain.restore_report` command supports RFC 3915 reports for **generic/VRSN**
 profiles. It builds XML from validated actual data; it does not call the pinned client's

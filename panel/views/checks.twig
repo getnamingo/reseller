@@ -10,7 +10,7 @@
       <option value="{{ item.registry_id }}">{{ item.registry }}</option>{% set shown = shown|merge([item.registry_id]) %}
     {% endif %}{% endfor %}</select></label>
     <label class="form-label mb-3">Domain names<textarea class="form-control" name="domains" rows="6" maxlength="15000" placeholder="example.com&#10;example.net" required></textarea></label>
-    <p class="text-secondary">One domain per line, up to 50. Use ASCII / punycode names without a trailing dot. Checks are free unless a legacy price is listed below.</p>
+    <p class="text-secondary">One domain per line, up to 50. Use ASCII / punycode names without a trailing dot. Availability checks are free.</p>
     <button class="btn btn-primary">Check availability</button>
   </form>
 </div></div>
@@ -19,9 +19,6 @@
   <div class="card-footer text-secondary">Only explicitly permitted TLDs are accepted.</div>
 </div></div>
 </div>
-<div class="card mt-4"><div class="card-header"><h2 class="card-title">Availability check prices</h2></div>
-{{ tables.show(prices, {'registry':'Registry', 'amount':'Per submitted check', 'currency':'Currency', 'scope':'Source'}) }}
-<div class="card-footer text-secondary">Checks without a legacy price are free. Existing prices still apply.</div></div>
 <div class="card mt-4"><div class="card-header"><h2 class="card-title">Latest 50 availability checks</h2></div>
 {{ tables.show(jobs, {'check_id':'Check UUID', 'status':'Status', 'price':'Price', 'currency':'Currency', 'created_at':'Date'}) }}
 </div>
