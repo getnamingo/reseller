@@ -403,7 +403,9 @@ $server->on('Request', static function (Request $request, Response $response) us
                 ]);
             }
 
-            if (!$created['existing'] || $created['status'] === 'queued') {
+            $async = $command === 'domain.check' && ($request->header['prefer'] ?? '') === 'respond-async';
+            if ($async) { $response->header('Preference-Applied', 'respond-async'); }
+            if (!$async && (!$created['existing'] || $created['status'] === 'queued')) {
                 $server->taskwait($created['job_id'], Config::float('API_SYNC_WAIT_SECONDS', 25.0));
             }
             $job = Ledger::fetchJob($pdo, $created['job_id'], $user['id']);
