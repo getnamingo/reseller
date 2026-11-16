@@ -9,11 +9,28 @@ use Slim\Views\Twig;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 require_once dirname(__DIR__) . '/src/Contacts.php';
+
+// Complete a worker job precisely between the pending refresh and ownership discovery.
+final class ContactTestPDO extends PDO
+{
+    public ?Closure $beforeOwnershipDiscovery = null;
+
+    public function prepare(string $query, array $options = []): PDOStatement|false
+    {
+        if ($this->beforeOwnershipDiscovery !== null && str_starts_with($query, 'SELECT o.registry_id, o.object_name, o.reseller_id, r.name FROM object_ownership')) {
+            $callback = $this->beforeOwnershipDiscovery;
+            $this->beforeOwnershipDiscovery = null;
+            $callback();
+        }
+        return parent::prepare($query, $options);
+    }
+}
+
 $dsn = getenv('TEST_MYSQL_DSN') ?: 'mysql:host=127.0.0.1;port=3306';
 $options = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false, PDO::ATTR_STRINGIFY_FETCHES => true];
 $dbAdmin = new PDO($dsn, getenv('TEST_MYSQL_USER') ?: 'root', getenv('TEST_MYSQL_PASSWORD') ?: '', $options);
 $db = 'reseller_contacts_' . bin2hex(random_bytes(6)); $dbAdmin->exec("CREATE DATABASE `$db`");
-$pdo = new PDO($dsn . ';dbname=' . $db, getenv('TEST_MYSQL_USER') ?: 'root', getenv('TEST_MYSQL_PASSWORD') ?: '', $options);
+$pdo = new ContactTestPDO($dsn . ';dbname=' . $db, getenv('TEST_MYSQL_USER') ?: 'root', getenv('TEST_MYSQL_PASSWORD') ?: '', $options);
 $_ENV['APP_MASTER_KEY'] = 'base64:' . base64_encode(random_bytes(32)); $_ENV['APP_ENV'] = 'local'; $_ENV['PANEL_ORIGIN'] = 'http://localhost';
 $sessionRoot = sys_get_temp_dir() . '/' . $db; PanelSession::start($sessionRoot); $checks = 0;
 function check(bool $ok, string $message): void { global $checks; ++$checks; if (!$ok) { throw new RuntimeException($message); } }
@@ -172,11 +189,33 @@ try {
         check($params['id'] === $multiRow['registries'][$reg]['contact_id'], 'Update uses each stored registry ID rather than the form ID');
         finish($link['job_uuid'], ['code' => 1000]);
     }
+    // A worker can finish after the first pending refresh but before discovery reads ownership.
+    foreach ([$r1, $lt] as $raceRegistry) {
+        $race = input([$raceRegistry]); $race['reseller_id'] = $a;
+        $race['fields']['orgcode'] = ''; $race['fields']['role'] = '';
+        check(request('/admin/contacts', 'POST', $race)->getStatusCode() === 303, 'Race fixture create submitted');
+        $raceRow = Contacts::get($pdo, $race['contact_id'], $admin);
+        $raceJob = $raceRow['registries'][$raceRegistry]['job_uuid'];
+        $actualId = $raceRegistry === $lt ? 'LT-RACE-GENERATED' : $race['fields']['id'];
+        $beforeRace = value('SELECT COUNT(*) FROM panel_contacts');
+        $pdo->beforeOwnershipDiscovery = static function () use ($raceJob, $actualId): void {
+            finish($raceJob, ['id' => $actualId, 'code' => 1000]);
+        };
+        Contacts::listing($pdo, $admin, 1, true);
+        check($pdo->beforeOwnershipDiscovery === null, 'Worker finishes at the discovery boundary');
+        check(value('SELECT COUNT(*) FROM panel_contacts') === $beforeRace, 'Completed panel create is not imported as a duplicate');
+        check(Contacts::get($pdo, $race['contact_id'], $admin)['registries'][$raceRegistry]['contact_id'] === $actualId, 'Original contact receives the completed registry ID');
+        Contacts::listing($pdo, $admin, 1, true);
+        check(value('SELECT COUNT(*) FROM panel_contacts') === $beforeRace, 'Repeated discovery preserves one local contact');
+    }
+    // An unrelated pending panel create must not hide existing API contacts in the same registry.
+    $waiting = input([$r1]); $waiting['reseller_id'] = $b;
+    check(request('/admin/contacts', 'POST', $waiting)->getStatusCode() === 303, 'Unrelated create remains pending');
     // Existing API/CLI objects appear without migration guesses or duplication on refresh.
     $pdo->prepare("INSERT INTO object_ownership (registry_id, object_type, object_name, reseller_id, active) VALUES (?, 'contact', 'LEGACY-B', ?, 1)")->execute([$r1, $b]);
     check(str_contains(html('/admin/contacts'), 'LEGACY-B'), 'Admin list imports existing API-owned contacts');
     html('/admin/contacts');
-    check(value('SELECT COUNT(*) FROM panel_contacts WHERE reseller_id = ?', [$b]) === '1', 'Ownership imports are idempotent');
+    check(value('SELECT COUNT(*) FROM panel_contacts WHERE reseller_id = ?', [$b]) === '2', 'Ownership import remains idempotent alongside a pending create');
     for ($i = 0; $i < 55; ++$i) { $pdo->prepare("INSERT INTO object_ownership (registry_id, object_type, object_name, reseller_id, active) VALUES (?, 'contact', ?, ?, 1)")->execute([$r1, sprintf('paginate-b-%02d', $i), $b]); }
     $paged = html('/admin/contacts'); preg_match('/<tbody>(.*?)<\/tbody>/s', $paged, $body);
     check(substr_count($body[1], '<tr>') === 50 && str_contains($paged, '?page=2'), 'Contact list paginates at 50 complete contacts');

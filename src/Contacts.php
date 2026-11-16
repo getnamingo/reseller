@@ -139,9 +139,16 @@ final class Contacts
                 AND LOWER(JSON_UNQUOTE(JSON_EXTRACT(c.registries, CONCAT('$."', o.registry_id, '".contact_id')))) = LOWER(o.object_name))
 SQL;
         foreach (PanelData::rows($pdo, $sql, $scope === null ? [] : [$scope]) as $owned) {
-            // Serialize import and local saves for this owner/registry; prevent duplicate imports across requests.
-            self::lock($pdo, substr(hash('sha256', $owned['reseller_id'] . $owned['registry_id']), 0, 36), function () use ($pdo, $owned) {
-                $path = '$."' . $owned['registry_id'] . '".contact_id';
+            // Serialize imports and reconcile creates after observing this active ownership record.
+            self::lock($pdo, substr(hash('sha256', $owned['reseller_id'] . $owned['registry_id']), 0, 36), function () use ($pdo, $owned, $actor) {
+                $registryPath = '$."' . $owned['registry_id'] . '"';
+                foreach (PanelData::rows($pdo, "SELECT id FROM panel_contacts WHERE reseller_id = ?
+                    AND JSON_UNQUOTE(JSON_EXTRACT(registries, ?)) = 'contact.create'
+                    AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(registries, ?)), 'false') <> 'true'",
+                    [$owned['reseller_id'], $registryPath . '.command', $registryPath . '.applied']) as $pending) {
+                    self::get($pdo, $pending['id'], $actor);
+                }
+                $path = $registryPath . '.contact_id';
                 if (PanelData::rows($pdo, 'SELECT id FROM panel_contacts WHERE reseller_id = ? AND LOWER(JSON_UNQUOTE(JSON_EXTRACT(registries, ?))) = LOWER(?)', [$owned['reseller_id'], $path, $owned['object_name']])) { return; }
                 $link = [$owned['registry_id'] => ['registry_name' => $owned['name'], 'contact_id' => $owned['object_name'], 'status' => 'succeeded', 'applied' => true]];
                 $pdo->prepare('INSERT INTO panel_contacts (id, reseller_id, registries) VALUES (?, ?, ?)')->execute([Util::uuid(), $owned['reseller_id'], Util::json($link)]);
