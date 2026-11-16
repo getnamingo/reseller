@@ -270,6 +270,69 @@ sudo -u namingo-api php8.5 bin/manage.php price:delete REGISTRY_UUID domain.crea
 Profiles whose pinned methods use a fixed/implicit term reject requests for longer
 terms: LV/NO creation, PT renewal, and EE/FRED/FI/IT/LT transfer requests.
 
+### Upgrade an installer-created demo
+
+Use `deploy/upgrade.sh` for an existing installation made by `deploy/install.sh`.
+Run it from a separate checkout outside `/opt/namingo-reseller-api`, for example the
+original `reseller` checkout used during installation:
+
+```bash
+cd /path/to/reseller
+git pull --ff-only
+sudo bash deploy/upgrade.sh
+```
+
+Review the incoming code first. You can check out a specific release/commit instead of
+pulling `main`; the script deploys the checked-out files and uses `composer.lock`.
+It does not pull Git changes, install OS packages, reset accounts or generate new secrets.
+If PHP/extension requirements change, install those packages before upgrading.
+
+The script checks the standard local database/service layout, installs Composer
+dependencies and panel assets in a temporary directory, then briefly stops the API and
+`php8.5-fpm`. This interrupts **all pools on that PHP-FPM service**, so schedule downtime
+if it hosts other sites. Avoid provisioning during the upgrade; reconcile unknown jobs
+beforehand and allow active registry operations to finish. Old ownership migrations
+also require unfinished jobs to be reconciled, as enforced by `manage.php migrate`.
+
+Before replacing files it saves the application (including `.env`, dependencies and
+permissions), the installed API service unit and a MariaDB dump under a private
+`/var/backups/namingo-reseller/TIMESTAMP.SUFFIX/` directory. It preserves `.env`, runs
+migrations as `namingo-api` with temporary schema privileges, revokes those privileges,
+updates the API service unit, restores public-file ACLs, restarts the services and checks
+API `/readyz`. Caddy/FPM configuration, hostnames, database credentials, accounts and
+registry settings are retained. Check the existing panel URL and an availability check
+after success. Backups contain secrets; keep them private and remove old backups when
+no longer needed.
+
+A dependency-install failure leaves the running demo untouched. A failure after services
+stop leaves the API and PHP-FPM stopped, reports the backup directory and attempts to
+revoke migration privileges. Fix the error before restarting. There is no automatic
+schema rollback: migrations can partially apply. To restore the pre-upgrade snapshot,
+keep submissions stopped and restore **both code and database**, for example as root:
+
+```bash
+sudo -i
+BACKUP=/var/backups/namingo-reseller/TIMESTAMP.SUFFIX
+systemctl stop namingo-reseller-api php8.5-fpm
+RESTORE_DIR=$(mktemp -d)
+tar --acls --xattrs -xzf "$BACKUP/application.tar.gz" -C "$RESTORE_DIR"
+rsync -aA --delete "$RESTORE_DIR/" /opt/namingo-reseller-api/
+cp -a "$BACKUP/namingo-reseller-api.service" /etc/systemd/system/namingo-reseller-api.service
+# Replaces the local app database with the snapshot; later changes will be lost.
+mariadb --no-defaults --protocol=socket --socket=/run/mysqld/mysqld.sock -u root -e 'DROP DATABASE namingo_api;'
+gzip -dc "$BACKUP/database.sql.gz" | mariadb --no-defaults --protocol=socket --socket=/run/mysqld/mysqld.sock -u root
+mariadb --no-defaults --protocol=socket --socket=/run/mysqld/mysqld.sock -u root -e "REVOKE CREATE, ALTER, INDEX, REFERENCES ON namingo_api.* FROM 'namingo_api'@'127.0.0.1';"
+rm -rf -- "$RESTORE_DIR"
+systemctl daemon-reload
+systemctl start namingo-reseller-api php8.5-fpm
+curl -fsS http://127.0.0.1:9501/readyz
+exit
+```
+
+For custom paths, database names/users, remote databases or a different service layout,
+use the manual upgrade steps below. Upgrade-script regression checks use mocked
+services/database commands and can run without root: `bash tests/upgrade.sh`.
+
 ### Object ownership and upgrading existing installations
 
 Each upstream account must have **one registry UUID**, shared through registry grants.
@@ -562,6 +625,7 @@ editing, token behavior, CLI commands, migration and safe TLD removal.
 
 ### Install or upgrade
 
+For the standard demo layout, use `deploy/upgrade.sh` as described above.
 The automatic `deploy/install.sh` setup already installs the panel with a dedicated
 `namingo-panel` PHP-FPM pool. The steps below are the manual installation/upgrade
 alternative; keep the generated dedicated pool and Caddy configuration when upgrading.

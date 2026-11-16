@@ -123,7 +123,7 @@ main() {
   [[ -f $SOURCE_ROOT/composer.lock && -f $SOURCE_ROOT/bin/manage.php ]] || fail 'Run this script from a complete reseller checkout.'
   [[ ! -e $APP_DIR/.env && ! -L $APP_DIR/.env && ! -e /etc/systemd/system/namingo-reseller-api.service \
       && ! -e /etc/php/8.5/fpm/pool.d/namingo-reseller.conf && ! -e /etc/caddy/sites/namingo-reseller.caddy ]] \
-    || fail 'An installation already exists. Back it up and use the README upgrade steps; this script does not replace it.'
+    || fail 'An installation already exists. Use deploy/upgrade.sh from a separate updated checkout; this installer does not replace it.'
   if grep -RqsE 'ppa\.launchpad(content)?\.net/ondrej/php|ppa:ondrej/php' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
     fail 'Remove the old ondrej/php PPA before installing from packages.sury.org/php.'
   fi
@@ -249,3 +249,4 @@ SQL
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi
+
