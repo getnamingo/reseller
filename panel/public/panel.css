@@ -11,3 +11,8 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .action-grid .card { height: 100%; }
 .uuid { font-family: var(--tblr-font-monospace); font-size: .85em; }
 .account-name { max-width: 10rem; }
+
+
+.price-amount { min-width: 8rem; }
+.price-dialog { width: min(34rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow-y: auto; }
+.price-dialog::backdrop { background: rgb(0 0 0 / 45%); }

@@ -591,9 +591,15 @@ final class CommandCatalog
         if ($profile !== null) { ProfileParams::validate(self::normalizeProfile($profile), $command, $params); }
     }
 
+    public static function priceOperations(): array
+    {
+        return ['domain.create' => 'Registration', 'domain.create_dnssec' => 'Registration with DNSSEC',
+            'domain.renew' => 'Renewal', 'domain.transfer' => 'Incoming transfer', 'domain.restore' => 'Restore'];
+    }
+
     public static function requiresPrice(string $command): bool
     {
-        return in_array($command, ['domain.create', 'domain.create_dnssec', 'domain.renew', 'domain.restore', 'domain.transfer'], true);
+        return array_key_exists($command, self::priceOperations());
     }
 
     public static function priceKey(string $command, array $params): array

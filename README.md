@@ -270,6 +270,26 @@ sudo -u namingo-api php8.5 bin/manage.php price:delete REGISTRY_UUID domain.crea
 Profiles whose pinned methods use a fixed/implicit term reject requests for longer
 terms: LV/NO creation, PT renewal, and EE/FRED/FI/IT/LT transfer requests.
 
+### Pricing in the control panel
+
+On **Administration → Prices**, choose one registry/TLD, a global or reseller scope,
+and currency, then fill the years-by-operation table. All 42 amount fields start blank
+and are required: totals for registration, DNSSEC registration, renewal and incoming
+transfer for years 1–10, plus per-operation restore and transfer follow-up prices.
+Enter `0` explicitly for a free operation. A save updates all exact rows for that TLD
+and scope in one transaction; missing or invalid fields roll back the entire table.
+
+The price list offers an **Edit** modal for changing one row's amount/currency and a
+**Delete** button for removing that exact row. Deletion behaves as if the row had never
+been configured: any remaining global/parent-zone fallback applies; otherwise new
+submissions requiring that price fail with `price_not_configured`. Existing jobs retain
+their recorded prices. Unsupported legacy rows are marked **Ignored** and offer deletion
+only. The panel and CLI share validation for the five permitted operations, terms and
+configured TLDs. `GET /v1/prices` is read-only; there is no API price-creation endpoint.
+
+Run `php8.5 tests/prices.php` with the documented `TEST_MYSQL_*` environment to exercise
+complete-table saves, validation/rollback, row editing/deletion and pricing fallback.
+
 ### Upgrade an installer-created demo
 
 Use `deploy/upgrade.sh` for an existing installation made by `deploy/install.sh`.

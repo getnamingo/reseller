@@ -4,7 +4,7 @@
 {% block content %}
 <datalist id="resellers">{% for item in resellers %}<option value="{{ item.id }}">{{ item.username }}</option>{% endfor %}</datalist>
 <datalist id="registries">{% for item in registries %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</datalist>
-<div class="action-grid mb-4">
+<div class="{{ section == 'prices' ? 'mb-4' : 'action-grid mb-4' }}">
 {% if section == 'resellers' %}
 <p class="text-secondary">Select a reseller's UUID in the table to edit its username and contact/company details.</p>
 <div class="card card-body"><h2 class="card-title">Add a reseller</h2><form method="post">{{ forms.hidden('user.create', csrf) }}
@@ -43,14 +43,7 @@
   <p class="text-secondary">Grant registry access first. Both the registry and TLD permissions must be enabled. The API enforces these permissions too.</p><button class="btn btn-primary">Save permission</button>
 </form></div>
 {% elseif section == 'prices' %}
-<div class="card card-body"><h2 class="card-title">Set or remove a price</h2><form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
-  {{ forms.select('action', 'Action', {'price.set':'Set exact price', 'price.delete':'Remove exact price row'}) }}
-  {{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{{ forms.input('scope', 'Scope (global or reseller UUID)', 'text', 'global', 'resellers') }}
-  <label class="form-label mb-3">Command<select class="form-select" name="command">{% for command in commands %}<option>{{ command }}</option>{% endfor %}</select></label>
-  {{ forms.input('tld', 'TLD (blank for registry-wide non-term operation)', 'text', '', '', false) }}
-  {{ forms.input('period', 'Years (1–10), or 0 for per operation', 'number', '0') }}{{ forms.input('amount', 'Total amount; 0 explicitly means free', 'text', '', '', false) }}{{ forms.input('currency', 'Currency', 'text', 'EUR', '', false) }}
-  <p class="text-secondary">Registration, renewal and incoming transfers need a TLD and exact total for the term. Add the TLD first. Prices can only be set for domain.create, domain.create_dnssec, domain.renew, domain.restore and domain.transfer. All other commands are free; old prices for them are ignored and can still be removed. Deleting a price may expose a configured global fallback.</p><button class="btn btn-primary">Apply price change</button>
-</form></div>
+{% include 'partials/price_form.twig' %}
 {% elseif section == 'deposits' %}
 <div class="card card-body"><h2 class="card-title">Decide a pending deposit</h2><form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
   {{ forms.select('action', 'Action', {'deposit.approve':'Approve and credit wallet', 'deposit.reject':'Reject'}) }}{{ forms.input('id', 'Deposit UUID') }}
@@ -73,7 +66,7 @@
 </form></div>
 {% endif %}
 </div>
-<div class="card">{{ tables.show(rows, columns, csrf) }}</div>
+{% if section == 'prices' %}{% include 'partials/price_list.twig' %}{% else %}<div class="card">{{ tables.show(rows, columns, csrf) }}</div>{% endif %}
 {% include 'partials/pagination.twig' %}
 {% if grants is defined %}<div class="card mt-4"><div class="card-header"><h2 class="card-title">Permission records (up to 100)</h2></div>{{ tables.show(grants, grant_columns, csrf) }}</div>{% endif %}
 {% endblock %}
