@@ -593,8 +593,7 @@ final class CommandCatalog
 
     public static function priceOperations(): array
     {
-        return ['domain.create' => 'Registration', 'domain.create_dnssec' => 'Registration with DNSSEC',
-            'domain.renew' => 'Renewal', 'domain.transfer' => 'Incoming transfer', 'domain.restore' => 'Restore'];
+        return ['domain.create' => 'Registration', 'domain.renew' => 'Renewal', 'domain.transfer' => 'Incoming transfer', 'domain.restore' => 'Restore'];
     }
 
     public static function requiresPrice(string $command): bool
@@ -1137,7 +1136,8 @@ final class Ledger
 
     private static function price(PDO $pdo, string $registryId, string $resellerId, string $command, array $params, string $walletCurrency): array
     {
-        if (!CommandCatalog::requiresPrice($command)) {
+        $command = $command === 'domain.create_dnssec' ? 'domain.create' : $command;
+        if (!CommandCatalog::requiresPrice($command) || ($command === 'domain.transfer' && ($params['op'] ?? '') !== 'request')) {
             return ['0.0000', $walletCurrency];
         }
         [$name, $period] = CommandCatalog::priceKey($command, $params);

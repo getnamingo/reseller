@@ -236,9 +236,12 @@ sudo -u namingo-api php8.5 bin/manage.php tld:grant RESELLER_UUID REGISTRY_UUID 
 
 The CLI encrypts the whole normalized registry JSON before insertion. PEM material is briefly written as mode `0600` under `/run/namingo-epp-api` by a task worker and removed in `finally`.
 
-Only `domain.create`, `domain.create_dnssec`, `domain.renew`, `domain.restore` and
-`domain.transfer` require an explicit price (zero is allowed). Missing prices for these
-commands return `409 price_not_configured` before an EPP job or wallet hold is committed.
+Registration (`domain.create`, including `domain.create_dnssec`), renewal, restore and
+incoming transfer requests require an explicit price (zero is allowed). DNSSEC creation
+always uses the matching `domain.create` row, including reseller overrides. Separate
+DNSSEC prices are unsupported and old rows are ignored. Transfer query, cancel, approve
+and reject are always free, even if old period-0 transfer rows exist. Missing required
+prices return `409 price_not_configured` before an EPP job or wallet hold is committed.
 All other commands are free, even if old price rows exist. These rows are ignored and
 excluded from reseller/API price lists. The panel and CLI reject adding or updating
 them; administrators can still list and delete them. Existing jobs retain their recorded prices.
@@ -248,8 +251,8 @@ not an annual amount multiplied automatically. The API derives the zone from the
 and the term from `period`, `regperiod`, or transfer `years` (integers 1–10).
 The longest matching configured zone wins (for example, `co.uk` before `uk`), then a
 reseller override wins over the global price for that same zone and term. There is no
-catch-all price fallback for these term operations. For other commands, period `0`
-means per operation and `-` means an explicit registry-wide price.
+catch-all price fallback for these term operations. For restore, period `0`
+means per operation and `-` means an explicit registry-wide restore price.
 
 ```bash
 # Total registration prices, with separate prices for each zone and term.
@@ -261,8 +264,7 @@ sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.create 
 sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.restore 25.00 EUR
 # Incoming request: domain.transfer with op=request, years=1 and authInfoPw.
 sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.transfer 12.50 EUR global com 1
-# Query/cancel/approve/reject use period 0, independently of incoming request prices.
-sudo -u namingo-api php8.5 bin/manage.php price:set REGISTRY_UUID domain.transfer 0 EUR
+# Transfer query/cancel/approve/reject are always free; do not configure prices for them.
 # Delete only the specified price row.
 sudo -u namingo-api php8.5 bin/manage.php price:delete REGISTRY_UUID domain.create global com 2
 ```
@@ -273,9 +275,10 @@ terms: LV/NO creation, PT renewal, and EE/FRED/FI/IT/LT transfer requests.
 ### Pricing in the control panel
 
 On **Administration → Prices**, choose one registry/TLD, a global or reseller scope,
-and currency, then fill the years-by-operation table. All 42 amount fields start blank
-and are required: totals for registration, DNSSEC registration, renewal and incoming
-transfer for years 1–10, plus per-operation restore and transfer follow-up prices.
+and currency, then fill the years-by-operation table. All 31 amount fields start blank
+and are required: totals for registration, renewal and incoming transfer for years 1–10, plus a
+per-operation restore price. DNSSEC registration shares registration pricing; transfer
+follow-ups are free and have no price fields.
 Enter `0` explicitly for a free operation. A save updates all exact rows for that TLD
 and scope in one transaction; missing or invalid fields roll back the entire table.
 
@@ -284,7 +287,7 @@ The price list offers an **Edit** modal for changing one row's amount/currency a
 been configured: any remaining global/parent-zone fallback applies; otherwise new
 submissions requiring that price fail with `price_not_configured`. Existing jobs retain
 their recorded prices. Unsupported legacy rows are marked **Ignored** and offer deletion
-only. The panel and CLI share validation for the five permitted operations, terms and
+only. The panel and CLI share validation for the four permitted operations, terms and
 configured TLDs. `GET /v1/prices` is read-only; there is no API price-creation endpoint.
 
 Run `php8.5 tests/prices.php` with the documented `TEST_MYSQL_*` environment to exercise
@@ -388,7 +391,7 @@ For an existing installation:
    php8.5 bin/manage.php object:assign REGISTRY_UUID host ns1.example.com RESELLER_UUID
    ```
 
-4. Configure prices for the five priced domain commands and exact zone/term totals,
+4. Configure prices for the four priced domain operations and exact zone/term totals,
    then restart the API and workers.
 
 Successful creates activate ownership; rejected creates release it. Domain deletions retain ownership in state `deleted` through redemption until a registry
@@ -598,6 +601,10 @@ the Refresh results link remains available. Completed job results are reused dur
 refreshes, which never submit another check.
 The latest 10 batches remain in the current panel session; individual job links remain
 in check history. API clients still specify `registry_uuid`; automatic routing is a panel feature.
+The reseller Prices page uses a compact card per registry/suffix with a term comparison
+table, currency labels, override indicators and a separate restore amount. Legacy DNSSEC
+and period-0 transfer prices are excluded from both cards and API price listings.
+Filtering `/v1/prices` by `command=domain.create_dnssec` returns shared registration rows.
 The Wallet page also submits deposit requests through the API in the wallet currency.
 Keep the same request/payment reference when retrying; funds are credited only after
 administrator approval following independent verification of payment.

@@ -169,10 +169,10 @@ final class Admin
                         $amounts = $input['amounts'] ?? null;
                         $operations = CommandCatalog::priceOperations();
                         if (!is_array($amounts) || count($amounts) !== count($operations) || array_diff(array_keys($amounts), array_keys($operations))) {
-                            throw new ApiException(422, 'invalid_price_table', 'Supply prices for exactly the five supported domain operations.');
+                            throw new ApiException(422, 'invalid_price_table', 'Supply prices for exactly the four supported domain operations.');
                         }
                         foreach ($operations as $command => $label) {
-                            $periods = $command === 'domain.restore' ? [0] : range($command === 'domain.transfer' ? 0 : 1, 10);
+                            $periods = $command === 'domain.restore' ? [0] : range(1, 10);
                             $values = $amounts[$command] ?? null;
                             if (!is_array($values) || count($values) !== count($periods) || array_diff(array_keys($values), $periods)) {
                                 throw new ApiException(422, 'required_price', "Fill every {$label} price; enter 0 explicitly for free operations.");
@@ -184,7 +184,7 @@ final class Admin
                                 self::savePrice($pdo, $target, $scope, $command, $tld, $period, trim($values[$period]), $get('currency'));
                             }
                         }
-                        $metadata = ['scope' => $scope, 'tld' => $tld, 'prices' => 42];
+                        $metadata = ['scope' => $scope, 'tld' => $tld, 'prices' => 31];
                         break;
                     case 'price.set':
                     case 'price.delete':
@@ -240,12 +240,12 @@ final class Admin
     {
         CommandCatalog::method($command);
         if (!CommandCatalog::requiresPrice($command)) {
-            throw new ApiException(422, 'unsupported_price_command', 'Prices may only be set for domain.create, domain.create_dnssec, domain.renew, domain.restore and domain.transfer.');
+            throw new ApiException(422, 'unsupported_price_command', 'Prices may only be set for domain.create, domain.renew, domain.restore and incoming domain.transfer.');
         }
         if (!Util::isUuid($registry) || ($scope !== CommandCatalog::GLOBAL_PRICE_UUID && !Util::isUuid($scope)) || $period < 0 || $period > 10
-            || (in_array($command, ['domain.create', 'domain.create_dnssec', 'domain.renew'], true) && ($tld === '' || $period === 0))
+            || ($command !== 'domain.restore' && ($tld === '' || $period === 0))
             || ($period > 0 && ($tld === '' || $command === 'domain.restore'))) {
-            throw new ApiException(422, 'invalid_price_scope', 'Term prices need a TLD and 1–10 years; restore and transfer follow-ups use term 0.');
+            throw new ApiException(422, 'invalid_price_scope', 'Term prices need a TLD and 1–10 years; only restore uses term 0. Transfer follow-ups are always free.');
         }
         if ($tld !== '') {
             $tld = Access::tld($tld);

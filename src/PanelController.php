@@ -294,10 +294,17 @@ final class PanelController
                         'tld' => 'TLD', 'tld_enabled' => 'TLD enabled', 'permitted' => 'TLD permitted']];
                 break;
             case '/prices':
-                $data += ['title' => 'Your prices', 'rows' => PanelData::prices($this->pdo, $id),
-                    'note' => 'Total prices for each term. Term 0 is per operation. A blank TLD covers non-term operations across the registry. The longest matching zone takes priority, then your override. Only domain.create, domain.create_dnssec, domain.renew, domain.restore and domain.transfer require prices. All other commands are free; any old prices for them are ignored.',
-                    'columns' => ['registry' => 'Registry', 'command' => 'Operation', 'tld' => 'TLD', 'period' => 'Years / 0 per operation', 'amount' => 'Total', 'currency' => 'Currency', 'scope' => 'Source']];
-                break;
+                $groups = [];
+                foreach (PanelData::prices($this->pdo, $id) as $price) {
+                    $key = $price['registry_id'] . ':' . $price['tld'];
+                    $groups[$key]['registry'] = $price['registry'];
+                    $groups[$key]['tld'] = $price['tld'];
+                    if ($price['command'] === 'domain.restore') { $groups[$key]['restore'] = $price; }
+                    else { $groups[$key]['terms'][(int) $price['period']][$price['command']] = $price; }
+                }
+                foreach ($groups as &$group) { if (isset($group['terms'])) { ksort($group['terms']); } }
+                unset($group);
+                return $this->render($response, 'prices.twig', $data + ['title' => 'Your prices', 'price_groups' => $groups]);
             case '/wallet':
                 $data += ['title' => 'Wallet and ledger', 'rows' => PanelData::rows($this->pdo,
                     "SELECT kind, available_delta, held_delta, available_after, held_after, currency, description, created_at FROM ledger_entries WHERE reseller_id = ? ORDER BY created_at DESC, id DESC LIMIT 51 OFFSET {$offset}", [$id]),

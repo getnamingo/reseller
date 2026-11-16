@@ -108,7 +108,7 @@ try {
         Lifecycle::observeFollowup($pdo,$pendingCancel,$cancelled,'shared');
         Lifecycle::settle($pdo,$pendingCancel,$cancelled,'shared');
         check(raw($cancel)['status']==='succeeded' && raw($parent)['status']==='rejected' && own($name)===false,'Both settlement orders finish cancellation and original request');
-        check((int)$pdo->query("SELECT COUNT(*) FROM ledger_entries WHERE job_id='".$cancel['job_id']."' AND kind='charge'")->fetchColumn()===1,'Cancellation fee charges exactly once');
+        check((int)$pdo->query("SELECT COUNT(*) FROM ledger_entries WHERE job_id='".$cancel['job_id']."' AND kind='charge'")->fetchColumn()===0 && raw($cancel)['price']==='0.0000','Cancellation is free despite legacy per-operation price');
         check((int)$pdo->query("SELECT COUNT(*) FROM ledger_entries WHERE job_id='".$parent['job_id']."' AND kind='release'")->fetchColumn()===1,'Original transfer hold releases exactly once');
     }
     $pdo->exec("UPDATE registry_prices SET amount=0 WHERE command='domain.transfer' AND period=0");

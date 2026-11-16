@@ -100,6 +100,7 @@ try {
     verify(count($prices) === 2, 'Only permitted effective prices for supported commands');
     verify(is_int($prices[0]['period']) && $prices[0]['registry_uuid'] === $registry, 'API price types and registry UUID field');
     verify(!str_contains(json_encode($prices), '999.0000') && !str_contains(json_encode($prices), 'net'), 'Other reseller overrides and forbidden zones excluded');
+    verify(listing('prices', ['command' => 'domain.create_dnssec'])['data'] === listing('prices', ['command' => 'domain.create'])['data'], 'DNSSEC API price filter returns shared registration prices');
     $filtered = listing('prices', ['command' => 'domain.create', 'tld' => '.COM', 'period' => '1', 'registry_uuid' => $registry]);
     verify(count($filtered['data']) === 1 && $filtered['data'][0]['amount'] === '9.0000', 'Exact zone/term and reseller override');
     verify(listing('prices', ['period' => '0'])['data'] === [], 'Ignored legacy operation prices are excluded');

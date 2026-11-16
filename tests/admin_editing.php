@@ -74,6 +74,10 @@ try{
     check($result[0]===1 && str_contains($result[2],'Add this TLD'), 'CLI rejects unknown TLD pricing');
     $result=cli(['price:set',$registry,'domain.restore','5','EUR','global','com','1']);
     check($result[0]===1, 'CLI rejects term pricing for restore');
+    $result=cli(['price:set',$registry,'domain.create_dnssec','5','EUR','global','com','1']);
+    check($result[0]===1 && str_contains($result[2],'Prices may only be set'), 'CLI rejects separate DNSSEC registration prices');
+    $result=cli(['price:set',$registry,'domain.transfer','5','EUR']);
+    check($result[0]===1, 'CLI rejects per-operation transfer prices');
     $pdo->prepare("INSERT INTO registry_prices(registry_id,command,amount,currency) VALUES(?,'domain.check',0,'EUR')")->execute([$registry]);
     Admin::perform($pdo,$root,'tld.unassign',['registry_id'=>$registry,'reseller_id'=>$a,'tld'=>'co.uk'],'127.0.0.1');
     denied('tld_not_permitted',fn()=>Access::domains($pdo,$registry,$a,'domain.check',['domains'=>['example.co.uk']]));
