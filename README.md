@@ -569,8 +569,13 @@ the longest permitted configured suffix (including multi-label zones); equal mat
 across registries are reported as ambiguous. Unsupported, invalid and failed names get
 individual results without blocking other registry groups. The panel submits only
 `domain.check` through the API with the current reseller's token; results are read
-through the API too. They are always free and use a stable idempotency key per form/registry group. Checks use `Prefer: respond-async`
-to queue without waiting for each registry. Refreshing results only reads existing jobs.
+through the API too. They are always free and use a stable idempotency key per form/registry group. Multi-domain checks use `Prefer: respond-async` to queue without waiting for each registry.
+A single-domain check uses the normal synchronous API wait and immediately displays the
+returned result when complete. If work is still queued/processing, the results table
+updates automatically using read-only polling, without reloading the page or losing new
+form input. Polling stops when all jobs finish and pauses after repeated network errors;
+the Refresh results link remains available. Completed job results are reused during
+refreshes, which never submit another check.
 The latest 10 batches remain in the current panel session; individual job links remain
 in check history. API clients still specify `registry_uuid`; automatic routing is a panel feature.
 The Wallet page also submits deposit requests through the API in the wallet currency.

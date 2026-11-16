@@ -2,11 +2,12 @@
 {% import 'partials/table.twig' as tables %}
 {% block content %}
 {% if batch %}
-<div class="card mb-4"><div class="card-header"><h2 class="card-title">Availability results</h2></div>
+<div class="card mb-4" id="availability-results" data-pending="{{ pending ? 'true' : 'false' }}" data-poll-url="/checks?batch={{ batch }}&amp;format=json"><div class="card-header"><h2 class="card-title">Availability results</h2></div>
 <div class="table-responsive"><table class="table"><thead><tr><th>Domain</th><th>Registry</th><th>Result</th><th>Reason</th></tr></thead><tbody>
-{% for row in results %}<tr><td>{{ row.name }}</td><td>{% if row.job_uuid %}<a href="/checks/{{ row.job_uuid }}">{{ row.registry }}</a>{% else %}{{ row.registry ?? '—' }}{% endif %}</td><td>{{ row.status }}</td><td>{{ row.reason }}</td></tr>{% endfor %}
+{% for row in results %}<tr><td>{{ row.name }}</td><td>{% if row.job_uuid %}<a href="/checks/{{ row.job_uuid }}">{{ row.registry }}</a>{% else %}{{ row.registry ?? '—' }}{% endif %}</td><td>{{ row.status in ['Queued', 'Processing', 'Pending'] ? 'Checking…' : row.status }}</td><td>{{ row.reason }}</td></tr>{% endfor %}
 </tbody></table></div>
-<div class="card-footer"><a class="btn btn-primary" href="/checks?batch={{ batch }}">Refresh results</a> <span class="text-secondary">Refreshing only reads existing checks. Batch results remain in this session for the latest 10 submissions.</span></div></div>
+<div class="card-footer"><a class="btn btn-primary" href="/checks?batch={{ batch }}">Refresh results</a> <span class="text-secondary" data-poll-message role="status">{{ pending ? 'Checking… Results update automatically.' : 'Checks complete.' }} Refreshing only reads existing checks.</span></div></div>
+<script src="/checks.js" defer></script>
 {% endif %}
 <div class="row row-cards">
 <div class="col-lg-6"><div class="card card-body">

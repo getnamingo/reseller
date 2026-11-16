@@ -229,13 +229,56 @@ try {
     $result = body(request('/checks/' . $checkId));
     verify(str_contains($result, 'Available') && str_contains($result, 'Unavailable'), 'Readable check result');
     verify(!str_contains($result, '<script>alert(1)</script>') && str_contains($result, '&lt;script&gt;'), 'Registry result HTML escaped');
-    $mock->append(new Response(200, [], Util::json(['data' => $checkJob])));
     $batchResult = body(request('/checks?batch=' . $key));
     verify(str_contains($batchResult, 'Available') && str_contains($batchResult, 'Unavailable') && !str_contains($batchResult, '<script>'), 'Batch renders escaped per-domain availability');
     $calls = count($history);
     verify(request('/checks', 'POST', ['key' => $key, 'domains' => "available.com\ntaken.com"])->getStatusCode() === 303 && count($history) === $calls, 'Repeated form does not submit more jobs');
     verify(request('/checks', 'POST', ['key' => $key, 'domains' => 'different.com'])->getStatusCode() === 409, 'Batch key cannot be reused with other input');
     verify(request('/checks?batch=' . Util::uuid())->getStatusCode() === 404, 'Unknown session batch is rejected');
+
+    // Single-domain submissions wait for the normal API response and reuse it immediately.
+    $singleKey = Util::uuid();
+    $singleId = Util::uuid();
+    $singleJob = array_replace($checkJob, ['job_uuid' => $singleId, 'result' => ['domains' => [['name' => 'instant.com', 'avail' => true]]]]);
+    $mock->append(new Response(200, [], Util::json(['data' => $singleJob])));
+    request('/checks', 'POST', ['key' => $singleKey, 'domains' => 'instant.com']);
+    verify(end($history)['request']->getHeaderLine('Prefer') === '', 'Single-domain check uses normal synchronous API behavior');
+    $calls = count($history);
+    $singleHtml = body(request('/checks?batch=' . $singleKey));
+    verify(str_contains($singleHtml, 'Available') && str_contains($singleHtml, 'Checks complete.') && count($history) === $calls, 'Single immediate result is displayed without another API read');
+    $singleJson = request('/checks?batch=' . $singleKey . '&format=json');
+    verify($singleJson->getHeaderLine('Cache-Control') === 'no-store' && json_decode(body($singleJson), true)['pending'] === false, 'Completed poll is private, non-cacheable and stops polling');
+
+    // A slow single check can still be queued; only GETs are needed to finish it.
+    $slowKey = Util::uuid(); $slowId = Util::uuid();
+    $queuedJob = ['job_uuid' => $slowId, 'command' => 'domain.check', 'status' => 'queued'];
+    $mock->append(new Response(202, [], Util::json(['data' => $queuedJob])));
+    request('/checks', 'POST', ['key' => $slowKey, 'domains' => 'slow.com']);
+    $mock->append(new Response(200, [], Util::json(['data' => $queuedJob])));
+    $slowHtml = body(request('/checks?batch=' . $slowKey));
+    verify(str_contains($slowHtml, 'data-pending="true"') && str_contains($slowHtml, '/checks.js') && str_contains($slowHtml, 'Checking…'), 'Slow single check enables automatic updates');
+    $mock->append(new Response(200, [], Util::json(['data' => array_replace($queuedJob, ['status' => 'processing'])])));
+    $poll = json_decode(body(request('/checks?batch=' . $slowKey . '&format=json')), true);
+    verify($poll['pending'] && $poll['rows'][0]['status'] === 'Processing', 'Poll reports active work');
+    $mock->append(new Response(503, [], Util::json(['error' => ['message' => 'Temporary API outage.']])));
+    $outageHtml = body(request('/checks?batch=' . $slowKey));
+    verify(str_contains($outageHtml, 'data-pending="true"') && str_contains($outageHtml, 'Temporary API outage.'), 'Initial transient read failure keeps automatic polling enabled');
+    $mock->append(new Response(503, [], Util::json(['error' => ['message' => 'Temporary API outage.']])));
+    $outage = json_decode(body(request('/checks?batch=' . $slowKey . '&format=json')), true);
+    verify($outage['pending'] && $outage['retryable'] && $outage['rows'][0]['status'] === 'Pending', 'Transient API read failure is pending and eligible for bounded retry');
+    $mock->append(new Response(200, [], Util::json(['data' => array_replace($queuedJob, ['status' => 'succeeded', 'result' => ['domains' => [['name' => 'slow.com', 'avail' => false]]]])])));
+    $poll = json_decode(body(request('/checks?batch=' . $slowKey . '&format=json')), true);
+    verify(!$poll['pending'] && $poll['rows'][0]['status'] === 'Unavailable' && end($history)['request']->getMethod() === 'GET', 'Poll returns final availability without resubmitting');
+    $calls = count($history);
+    request('/checks?batch=' . $slowKey . '&format=json');
+    verify(count($history) === $calls, 'Completed jobs are cached during later refreshes');
+    verify(request('/checks?batch=' . Util::uuid() . '&format=json')->getStatusCode() === 404, 'Polling cannot read unknown session batches');
+
+    $forbiddenKey = Util::uuid();
+    $_SESSION['checks'][$forbiddenKey] = ['hash' => '', 'rows' => [['name' => 'forbidden.com', 'job_uuid' => Util::uuid()]]];
+    $mock->append(new Response(403, [], Util::json(['error' => ['message' => 'Job access denied.']])));
+    $forbidden = json_decode(body(request('/checks?batch=' . $forbiddenKey . '&format=json')), true);
+    verify(!$forbidden['pending'] && !$forbidden['retryable'] && $forbidden['rows'][0]['status'] === 'Failed', 'Permanent API read rejection does not retry');
 
     $second = action('registry.save', ['name' => 'Second registry', 'profile' => 'generic', 'config_json' => Util::json($config)]);
     action('registry.access', ['registry_id' => $second, 'reseller_id' => $a, 'enabled' => '1']);
@@ -270,7 +313,7 @@ try {
     verify($submitted[0]['request']->getHeaderLine('Idempotency-Key') !== $submitted[1]['request']->getHeaderLine('Idempotency-Key'), 'Registry groups have distinct stable keys');
     $mock->append(new Response(200, [], Util::json(['data' => ['job_uuid' => $pendingId, 'command' => 'domain.check', 'status' => 'queued']])));
     $mixedHtml = body(request($mixed->getHeaderLine('Location')));
-    verify(str_contains($mixedHtml, 'Queued') && str_contains($mixedHtml, 'Registry unavailable.') && str_contains($mixedHtml, 'Not supported') && str_contains($mixedHtml, 'Invalid domain'), 'Pending, failed, unsupported and invalid domains coexist');
+    verify(str_contains($mixedHtml, 'Checking…') && str_contains($mixedHtml, 'Registry unavailable.') && str_contains($mixedHtml, 'Not supported') && str_contains($mixedHtml, 'Invalid domain'), 'Pending, failed, unsupported and invalid domains coexist');
     verify(!str_contains($mixedHtml, 'bad<script>'), 'Invalid domain input is HTML escaped');
     $mock->append(new Response(200, [], Util::json(['data' => ['job_uuid' => $pendingId, 'command' => 'domain.check', 'status' => 'rejected', 'result' => ['message' => 'Check not supported.']]])));
     verify(str_contains(body(request('/checks?batch=' . $mixedKey)), 'Check not supported.'), 'Registry rejection appears in batch results');
@@ -312,7 +355,6 @@ try {
     $mock->append(new Response(200, [], Util::json(['data' => array_replace($transferJob, ['status' => 'succeeded'])])));
     verify(request('/lifecycle', 'POST', array_replace($restoreInput, ['command' => 'domain.transfer', 'op' => 'query']))->getStatusCode() === 303, 'Panel submits transfer query through API');
     verify(request('/lifecycle', 'POST', array_replace($restoreInput, ['command' => 'domain.transfer', 'op' => 'request']))->getStatusCode() === 422, 'Panel does not start new transfers');
-    $mock->append(new Response(200, [], Util::json(['data' => $checkJob])));
     $batchResult = body(request('/checks?batch=' . $key));
     verify(str_contains($batchResult, 'Available') && str_contains($batchResult, 'Unavailable') && !str_contains($batchResult, '<script>'), 'Batch renders escaped per-domain availability');
     $calls = count($history);
@@ -353,7 +395,7 @@ try {
     verify($submitted[0]['request']->getHeaderLine('Idempotency-Key') !== $submitted[1]['request']->getHeaderLine('Idempotency-Key'), 'Registry groups have distinct stable keys');
     $mock->append(new Response(200, [], Util::json(['data' => ['job_uuid' => $pendingId, 'command' => 'domain.check', 'status' => 'queued']])));
     $mixedHtml = body(request($mixed->getHeaderLine('Location')));
-    verify(str_contains($mixedHtml, 'Queued') && str_contains($mixedHtml, 'Registry unavailable.') && str_contains($mixedHtml, 'Not supported') && str_contains($mixedHtml, 'Invalid domain'), 'Pending, failed, unsupported and invalid domains coexist');
+    verify(str_contains($mixedHtml, 'Checking…') && str_contains($mixedHtml, 'Registry unavailable.') && str_contains($mixedHtml, 'Not supported') && str_contains($mixedHtml, 'Invalid domain'), 'Pending, failed, unsupported and invalid domains coexist');
     verify(!str_contains($mixedHtml, 'bad<script>'), 'Invalid domain input is HTML escaped');
     $mock->append(new Response(200, [], Util::json(['data' => ['job_uuid' => $pendingId, 'command' => 'domain.check', 'status' => 'rejected', 'result' => ['message' => 'Check not supported.']]])));
     verify(str_contains(body(request('/checks?batch=' . $mixedKey)), 'Check not supported.'), 'Registry rejection appears in batch results');

@@ -202,13 +202,15 @@ final class PanelController
         foreach ($rows as $row) {
             if (isset($row['registry_id'])) { $groups[$row['registry_id']][] = $row['name']; }
         }
+        $jobs = [];
         foreach ($groups as $registry => $names) {
             try {
                 Access::domains($this->pdo, $registry, $this->user['id'], 'domain.check', ['domains' => $names]);
-                $job = $this->api->check($_SESSION['api_token'], $registry, $names, 'check-' . hash('sha256', $key . ':' . $registry));
+                $job = $this->api->check($_SESSION['api_token'], $registry, $names, 'check-' . hash('sha256', $key . ':' . $registry), count($domains) > 1);
                 if (!is_string($job['job_uuid'] ?? null) || !Util::isUuid($job['job_uuid'])) {
                     throw new ApiException(502, 'invalid_check', 'The API did not return a check reference.');
                 }
+                if (in_array($job['status'] ?? '', ['succeeded', 'rejected', 'unknown'], true)) { $jobs[$job['job_uuid']] = $job; }
                 foreach ($rows as &$row) {
                     if (($row['registry_id'] ?? null) === $registry) { $row['job_uuid'] = $job['job_uuid']; }
                 }
@@ -220,7 +222,7 @@ final class PanelController
                 unset($row);
             }
         }
-        $_SESSION['checks'][$key] = ['hash' => $hash, 'rows' => $rows];
+        $_SESSION['checks'][$key] = ['hash' => $hash, 'rows' => $rows, 'jobs' => $jobs];
         $_SESSION['checks'] = array_slice($_SESSION['checks'], -10, null, true);
         return $key;
     }
@@ -231,15 +233,21 @@ final class PanelController
             throw new ApiException(404, 'check_not_found', 'This batch is no longer in your session. Individual checks remain in check history.');
         }
         $rows = $_SESSION['checks'][$key]['rows'];
-        $jobs = [];
+        $jobs = $_SESSION['checks'][$key]['jobs'] ?? [];
         foreach ($rows as &$row) {
             if (!isset($row['job_uuid'])) { continue; }
             $id = $row['job_uuid'];
             if (!isset($jobs[$id])) {
                 try { $jobs[$id] = $this->api->job($_SESSION['api_token'], $id); }
-                catch (ApiException $e) { $jobs[$id] = ['status' => 'Failed', 'result' => ['error' => $e->getMessage()]]; }
+                catch (ApiException $e) {
+                    $retryable = $e->httpStatus >= 500 || in_array($e->httpStatus, [408, 429], true);
+                    $jobs[$id] = ['status' => $retryable ? 'pending' : 'failed', 'retryable' => $retryable,
+                        'result' => ['error' => $e->getMessage()]];
+                }
             }
             $job = $jobs[$id];
+            $row['retryable'] = $job['retryable'] ?? false;
+            if (in_array($job['status'] ?? '', ['succeeded', 'rejected', 'unknown'], true)) { $_SESSION['checks'][$key]['jobs'][$id] = $job; }
             $row['status'] = ucfirst($job['status'] ?? 'unknown');
             $row['reason'] = $job['result']['error'] ?? $job['result']['msg'] ?? $job['result']['message'] ?? '';
             if (!is_string($row['reason'])) { $row['reason'] = ''; }
@@ -304,9 +312,16 @@ final class PanelController
                 unset($object);
                 break;
             case '/checks':
+                $results = isset($query['batch']) ? $this->checkRows($query['batch']) : [];
+                $pending = array_filter($results, fn ($row) => in_array($row['status'], ['Queued', 'Processing', 'Pending'], true)) !== [];
+                if (($query['format'] ?? '') === 'json') {
+                    $response->getBody()->write(Util::json(['rows' => $results, 'pending' => $pending,
+                        'retryable' => array_filter($results, fn ($row) => $row['retryable'] ?? false) !== []]));
+                    return $response->withHeader('Content-Type', 'application/json')->withHeader('Cache-Control', 'no-store');
+                }
                 return $this->render($response, 'checks.twig', $data + ['title' => 'Domain availability', 'key' => Util::uuid(),
                     'access' => PanelData::access($this->pdo, $id), 'batch' => $query['batch'] ?? null,
-                    'results' => isset($query['batch']) ? $this->checkRows($query['batch']) : [],
+                    'results' => $results, 'pending' => $pending,
                     'jobs' => PanelData::rows($this->pdo, "SELECT id AS check_id, status, price, currency, created_at FROM epp_jobs WHERE reseller_id = ? AND command = 'domain.check' ORDER BY created_at DESC LIMIT 50", [$id])]);
             default:
                 throw new ApiException(404, 'not_found', 'Page was not found.');
