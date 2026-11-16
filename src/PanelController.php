@@ -129,7 +129,8 @@ final class PanelController
                     }
                     $id = Admin::perform($this->pdo, $this->user['id'], $action, $input, $ip);
                     $_SESSION['flash'] = 'Saved. Reference: ' . $id;
-                    return $this->redirect($response, $path);
+                    $page = $this->page($request);
+                    return $this->redirect($response, $path . ($page > 1 ? '?page=' . $page : ''));
                 }
                 return $this->admin($response, $section, $this->page($request));
             }
@@ -394,12 +395,12 @@ final class PanelController
             'prices' => ["SELECT p.registry_id, r.name AS registry_name, COALESCE(u.username, 'Global defaults') AS scope_name,
                 CASE WHEN p.reseller_id = '" . CommandCatalog::GLOBAL_PRICE_UUID . "' THEN 'global' ELSE p.reseller_id END AS scope,
                 p.command, p.tld, p.period, p.amount, p.currency FROM registry_prices p JOIN registries r ON r.id = p.registry_id
-                LEFT JOIN resellers u ON u.id = p.reseller_id ORDER BY r.name, p.tld, p.command, p.period",
+                LEFT JOIN resellers u ON u.id = p.reseller_id ORDER BY r.name, p.tld, p.command, p.period, p.reseller_id",
                 ['registry_id' => 'Registry UUID', 'scope' => 'Scope', 'command' => 'Command', 'tld' => 'TLD', 'period' => 'Term', 'amount' => 'Total', 'currency' => 'Currency']],
-            'deposits' => ['SELECT d.id, r.username, d.amount, d.currency, d.status, d.client_reference, d.created_at FROM deposit_requests d JOIN resellers r ON r.id = d.reseller_id ORDER BY d.created_at DESC',
-                ['id' => 'UUID', 'username' => 'Reseller', 'amount' => 'Amount', 'currency' => 'Currency', 'status' => 'Status', 'client_reference' => 'Reference', 'created_at' => 'Date']],
-            'jobs' => ['SELECT j.id AS admin_job_id, r.username, j.command, j.status, j.price, j.currency, j.created_at FROM epp_jobs j JOIN resellers r ON r.id = j.reseller_id ORDER BY j.created_at DESC',
-                ['admin_job_id' => 'UUID / details', 'username' => 'Reseller', 'command' => 'Command', 'status' => 'Status', 'price' => 'Price', 'currency' => 'Currency', 'created_at' => 'Date']],
+            'deposits' => ['SELECT d.id, r.username, d.amount, d.currency, d.status, d.client_reference, d.created_at, d.decided_at FROM deposit_requests d JOIN resellers r ON r.id = d.reseller_id ORDER BY d.created_at DESC, d.id DESC',
+                ['id' => 'UUID', 'username' => 'Reseller', 'amount' => 'Amount', 'currency' => 'Currency', 'status' => 'Status', 'client_reference' => 'Reference', 'created_at' => 'Date', 'decided_at' => 'Decided']],
+            'jobs' => ['SELECT j.id AS admin_job_id, r.username, g.name AS registry, j.command, j.status, j.price, j.currency, j.created_at FROM epp_jobs j JOIN resellers r ON r.id = j.reseller_id JOIN registries g ON g.id = j.registry_id ORDER BY j.created_at DESC, j.id DESC',
+                ['admin_job_id' => 'UUID / details', 'username' => 'Reseller', 'registry' => 'Registry', 'command' => 'Command', 'status' => 'Status', 'price' => 'Price', 'currency' => 'Currency', 'created_at' => 'Date']],
             'ownership' => ['SELECT registry_id, reseller_id, object_type, object_name, active, domain_state, job_id FROM object_ownership ORDER BY registry_id, object_type, object_name',
                 ['registry_id' => 'Registry UUID', 'reseller_id' => 'Reseller UUID', 'object_type' => 'Type', 'object_name' => 'Object', 'active' => 'Ownership confirmed', 'domain_state' => 'Domain state', 'job_id' => 'Pending job']],
         };

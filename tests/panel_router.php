@@ -15,7 +15,7 @@ if (!is_resource($process)) { throw new RuntimeException('Could not start PHP de
 fclose($pipes[0]);
 try {
     $context = stream_context_create(['http' => ['timeout' => 1, 'ignore_errors' => true]]);
-    foreach (['/checks.js', '/prices.js'] as $asset) {
+    foreach (['/checks.js', '/prices.js', '/admin-actions.js'] as $asset) {
         $body = false;
         for ($attempt = 0; $attempt < 50; ++$attempt) {
             $body = @file_get_contents('http://' . $address . $asset . '?v=router-test', false, $context);
@@ -30,7 +30,7 @@ try {
             throw new RuntimeException('Expected HTTP 200 JavaScript, got: ' . $headers);
         }
     }
-    echo "PASS: development router serves polling and price JavaScript\n";
+    echo "PASS: development router serves polling, price and admin action JavaScript\n";
 } finally {
     proc_terminate($process);
     proc_close($process);

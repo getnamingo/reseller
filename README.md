@@ -274,8 +274,9 @@ terms: LV/NO creation, PT renewal, and EE/FRED/FI/IT/LT transfer requests.
 
 ### Pricing in the control panel
 
-On **Administration → Prices**, choose one registry/TLD, a global or reseller scope,
-and currency, then fill the years-by-operation table. All 31 amount fields start blank
+**Administration → Prices** focuses on the paginated price list. The **Add price**
+button beside the title opens a large scrollable modal. Choose one registry/TLD, a
+global or reseller scope, and currency, then fill the years-by-operation table. All 31 amount fields start blank
 and are required: totals for registration, renewal and incoming transfer for years 1–10, plus a
 per-operation restore price. DNSSEC registration shares registration pricing; transfer
 follow-ups are free and have no price fields.
@@ -660,6 +661,25 @@ Apply migration `005_account_details` using `php bin/manage.php migrate` before 
 the updated API/panel. Existing accounts receive empty optional details. Run
 `tests/admin_editing.php` with the documented `TEST_MYSQL_*` settings to verify account
 editing, token behavior, CLI commands, migration and safe TLD removal.
+
+### Deposit and job administration
+
+**Administration → Deposits** and **Jobs** focus on their paginated tables, with no
+separate action cards or UUID entry. Pending deposits have **Approve** and **Reject**
+buttons; decided deposits have none. Pending/unknown jobs have **Approve** (charge the
+hold and apply ownership) and **Release** buttons; processing jobs have **Unknown**
+(retain the hold). Queued and completed jobs have no manual decision buttons. Job UUIDs
+still link to the full investigation page.
+
+Row actions open a Tabler confirmation modal with the selected record's context and
+require the existing independent-verification checkbox. Backend permissions, CSRF and
+status checks still apply, and actions retain the current pagination page. Deposit
+approval requires verified receipt of funds; job decisions require a verified registry
+outcome and confirmation that the original worker is no longer running.
+
+Run `php8.5 tests/admin_tables.php` with the documented `TEST_MYSQL_*` environment and
+`node tests/admin_actions.js` to exercise row eligibility, confirmations, wallet effects,
+pagination and modal state reset.
 
 ### Managing registries, TLDs and permissions
 

@@ -1,5 +1,4 @@
 {% import 'partials/forms.twig' as forms %}
-<div class="card card-body"><h2 class="card-title">Price one TLD</h2>
 <p class="text-secondary">Choose a registry/TLD and fill its complete price table. Amounts are totals for each term, not annual multipliers. Every field starts empty; enter 0 explicitly for free operations. All 31 prices save together.</p>
 <form method="post">{{ forms.hidden('price.batch', csrf) }}
 <div class="row"><div class="col-md-6"><label class="form-label mb-3">Registry / TLD<select class="form-select" name="zone" required><option value="">Choose a TLD</option>{% for zone in price_zones %}<option value="{{ zone.registry_id }}:{{ zone.tld }}">{{ zone.registry }} — .{{ zone.tld }}</option>{% endfor %}</select></label></div>
@@ -14,4 +13,4 @@
 <p class="text-secondary">Registration includes DNSSEC at the same price. Only incoming transfer requests are priced; transfer query, cancel, approve and reject are always free.</p>
 <p class="text-secondary">Existing rows for this exact TLD and scope are updated. Other operations cannot have prices. To change just one price, use Edit below.</p>
 <button class="btn btn-primary">Save TLD price table</button>
-</form></div>
+</form>

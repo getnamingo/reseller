@@ -1,0 +1,18 @@
+{% macro button(label, action, id, summary, confirmation, resolution = '', style = 'btn-outline-primary') %}
+<button type="button" class="btn btn-sm {{ style }}" data-bs-toggle="modal" data-bs-target="#admin-confirmation" data-admin-action="{{ {title: label, action: action, id: id, summary: summary, confirmation: confirmation, resolution: resolution}|json_encode }}">{{ label }}</button>
+{% endmacro %}
+<div class="card"><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr>{% for label in columns %}<th>{{ label }}</th>{% endfor %}<th>Actions</th></tr></thead><tbody>
+{% for row in rows %}<tr>{% for key, label in columns %}<td{% if key in ['id', 'admin_job_id'] %} class="uuid"{% endif %}>{% if key == 'admin_job_id' %}<a href="/admin/jobs/{{ row.admin_job_id }}">{{ row.admin_job_id }}</a>{% elseif key == 'status' %}<span class="badge {{ row.status in ['approved', 'succeeded'] ? 'bg-green-lt' : (row.status == 'rejected' ? 'bg-red-lt' : 'bg-yellow-lt') }}">{{ row.status }}</span>{% else %}{{ attribute(row, key) ?? '—' }}{% endif %}</td>{% endfor %}<td><div class="btn-list flex-nowrap">
+{% if section == 'deposits' and row.status == 'pending' %}
+{% set summary = row.username ~ ' · ' ~ row.amount ~ ' ' ~ row.currency ~ ' · ' ~ row.client_reference ~ ' · ' ~ row.id %}
+{{ _self.button('Approve', 'deposit.approve', row.id, summary, 'I independently verified that these funds were received. Approval credits the reseller wallet.', '', 'btn-outline-success') }}
+{{ _self.button('Reject', 'deposit.reject', row.id, summary, 'I independently verified the reason for rejecting this deposit. No funds will be credited.', '', 'btn-outline-danger') }}
+{% elseif section == 'jobs' and row.status in ['pending', 'unknown'] %}
+{% set summary = row.username ~ ' · ' ~ row.registry ~ ' · ' ~ row.command ~ ' · ' ~ row.price ~ ' ' ~ row.currency ~ ' · ' ~ row.admin_job_id %}
+{{ _self.button('Approve', 'job.resolve', row.admin_job_id, summary, 'I verified that the registry operation completed and its original worker is no longer running. This charges the hold and applies ownership.', 'charge', 'btn-outline-success') }}
+{{ _self.button('Release', 'job.resolve', row.admin_job_id, summary, 'I verified that the registry operation did not complete and its original worker is no longer running. This releases the hold.', 'release', 'btn-outline-danger') }}
+{% elseif section == 'jobs' and row.status == 'processing' %}
+{{ _self.button('Unknown', 'job.mark_unknown', row.admin_job_id, row.username ~ ' · ' ~ row.registry ~ ' · ' ~ row.command ~ ' · ' ~ row.admin_job_id, 'I verified that the original worker has stopped and its registry outcome needs reconciliation. The wallet hold is retained.') }}
+{% else %}<span class="text-secondary">—</span>{% endif %}
+</div></td></tr>{% else %}<tr><td colspan="{{ columns|length + 1 }}" class="text-secondary text-center py-4">No records to display.</td></tr>{% endfor %}
+</tbody></table></div></div>
