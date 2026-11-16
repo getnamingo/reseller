@@ -167,6 +167,34 @@ check(service($fixture, $store, ['expirydate' => '2028-12-31'])->renew() === [],
 check(count($fixture->keys) === 2, 'Next renewal is distinct');
 fails(fn () => operation(new Fixture(), 'renew', ['expirydate' => '']), 'valid WHMCS expiry');
 
+// Regression: a registry success can be synchronized into WHMCS before the timed-out action is retried.
+$fixture = new Fixture(); $store = new MemoryStore(); $fixture->timeout = 'domain.renew';
+fails(fn () => service($fixture, $store)->renew(), 'Simulated response timeout');
+$fixture->info['exDate'] = '2028-12-31T00:00:00Z';
+$synced = service($fixture, $store)->sync();
+check($synced['expirydate'] === '2028-12-31', 'Domain sync advances the local expiry after registry renewal');
+check(service($fixture, $store, ['expirydate' => $synced['expirydate'], 'regperiod' => 2])->renew() === [], 'Changed expiry and term resume outstanding renewal');
+$renewals = posts($fixture, 'domain.renew');
+check(count($renewals) === 2 && $renewals[0]['key'] === $renewals[1]['key'], 'Synced expiry retry retains original idempotency key');
+check($renewals[0]['params'] === $renewals[1]['params'] && $renewals[1]['params']['regperiod'] === 1, 'Retry uses original term rather than changed input');
+check(count($fixture->keys) === 1, 'Timeout then sync then retry creates only one paid renewal job');
+check(service($fixture, $store, ['expirydate' => $synced['expirydate'], 'regperiod' => 2])->renew() === [], 'A later separate renewal is allowed after outstanding success is returned');
+check(count($fixture->keys) === 2, 'Later confirmed purchase receives a distinct renewal job');
+
+$fixture = new Fixture(); $store = new MemoryStore(); $fixture->timeout = 'domain.renew';
+fails(fn () => service($fixture, $store)->renew(), 'Simulated');
+$id = array_key_first($fixture->jobs);
+$fixture->jobs[$id]['status'] = 'pending';
+fails(fn () => service($fixture, $store, ['expirydate' => '2028-12-31', 'regperiod' => 2])->renew(), 'pending');
+$fixture->failRead = true;
+fails(fn () => service($fixture, $store, ['expirydate' => '2028-12-31', 'regperiod' => 3])->renew(), 'job read outage');
+$fixture->jobs[$id]['status'] = 'unknown';
+fails(fn () => service($fixture, $store, ['expirydate' => '2028-12-31', 'regperiod' => 3])->renew(), 'unknown');
+check(count($fixture->keys) === 1, 'Pending, read failure and unknown states retain outstanding renewal across input changes');
+$fixture->jobs[$id]['status'] = 'succeeded';
+check(service($fixture, $store, ['expirydate' => '', 'regperiod' => 0])->renew() === [], 'Outstanding reconciliation precedes validation of new expiry and term');
+check(count($fixture->keys) === 1, 'Reconciliation does not create a new purchase');
+
 $fixture = new Fixture(); $store = new MemoryStore(); $fixture->timeout = 'domain.renew';
 fails(fn () => service($fixture, $store)->renew(), 'Simulated');
 $id = array_key_first($fixture->jobs); $fixture->jobs[$id]['status'] = 'unknown';
@@ -196,7 +224,13 @@ check(service($fixture, $store, ['ns1' => 'corrected.example.net'])->saveNameser
 $fixture = new Fixture(); $store = new MemoryStore(); $fixture->reject = 'domain.renew';
 fails(fn () => service($fixture, $store)->renew(), 'rejected');
 $fixture->reject = null;
-check(service($fixture, $store)->renew() === [] && count($fixture->keys) === 2, 'Definitively rejected request permits a fresh retry');
+check(service($fixture, $store, ['expirydate' => '2028-12-31', 'regperiod' => 2])->renew() === [] && count($fixture->keys) === 2, 'Definitively rejected request permits a fresh retry');
+check(posts($fixture, 'domain.renew')[1]['params']['regperiod'] === 2, 'Confirmed rejection clears the outstanding original term');
+
+$fixture = new Fixture(); $store = new MemoryStore(); $fixture->rejectSubmission = 422;
+fails(fn () => service($fixture, $store)->renew(), 'HTTP 422');
+check(service($fixture, $store, ['regperiod' => 2])->renew() === [], 'Initial API validation rejection clears outstanding renewal reference');
+check(count($fixture->keys) === 1 && posts($fixture, 'domain.renew')[0]['params']['regperiod'] === 2, 'Corrected renewal after initial rejection creates only the corrected job');
 
 $fixture = new Fixture(); $store = new MemoryStore();
 check(service($fixture, $store)->transfer() === [], 'Accepted pending transfer returns success');

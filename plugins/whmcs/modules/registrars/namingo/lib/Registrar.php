@@ -196,15 +196,33 @@ final class Registrar
 
     public function renew(): array
     {
-        if (!empty($this->params['isInRedemptionGracePeriod'])) {
-            throw new RuntimeException('This domain needs restoration through the registrar before it can be renewed.');
+        // Sync may advance WHMCS's expiry while the original paid request is still unresolved.
+        // Persist its identity independently of mutable expiry/term inputs before submitting it.
+        $outstandingKey = hash('sha256', $this->scope . '|renew-outstanding');
+        $outstanding = $this->store->get($outstandingKey);
+        if ($outstanding === null) {
+            if (!empty($this->params['isInRedemptionGracePeriod'])) {
+                throw new RuntimeException('This domain needs restoration through the registrar before it can be renewed.');
+            }
+            $expiry = (string) ($this->params['expirydate'] ?? '');
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/D', $expiry) || $expiry === '0000-00-00') {
+                throw new RuntimeException('A valid WHMCS expiry date is required to safely identify this renewal. Sync the domain first.');
+            }
+            $years = $this->years();
+            $outstanding = ['action' => 'renew-' . $expiry . '-' . $years,
+                'params' => ['domainname' => $this->domain, 'regperiod' => $years]];
+            $this->store->put($outstandingKey, $outstanding);
         }
-        $expiry = (string) ($this->params['expirydate'] ?? '');
-        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/D', $expiry) || $expiry === '0000-00-00') {
-            throw new RuntimeException('A valid WHMCS expiry date is required to safely identify this renewal. Sync the domain first.');
+        try {
+            $this->write($outstanding['action'], 'domain.renew', fn () => $outstanding['params'], true);
+        } catch (\Throwable $error) {
+            // write() removes only definitively rejected requests. Unknown/failed reads keep both records.
+            if ($this->store->get(hash('sha256', $this->scope . '|' . $outstanding['action'])) === null) {
+                $this->store->remove($outstandingKey);
+            }
+            throw $error;
         }
-        $years = $this->years();
-        $this->write('renew-' . $expiry . '-' . $years, 'domain.renew', fn () => ['domainname' => $this->domain, 'regperiod' => $years], true);
+        $this->store->remove($outstandingKey);
         return [];
     }
 

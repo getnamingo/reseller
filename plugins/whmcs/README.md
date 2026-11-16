@@ -32,7 +32,7 @@ Keys accept a leading dot. The longest suffix wins, so `org.ua` takes precedence
 | Availability | API `domain.check`; unsupported mapping is distinguished from API errors |
 | Register | Creates dedicated registrant/admin/technical/billing contacts, then registers with 2–5 nameservers |
 | Transfer in | Submits the transfer request with EPP code; TransferSync checks approval or rejection separately |
-| Renew | Uses the WHMCS domain expiry date and term to identify one renewal safely |
+| Renew | Resumes an outstanding renewal before using the WHMCS expiry date and term to identify a new purchase |
 | Nameservers | Read and replace delegation |
 | Registrar lock | Read/add/remove `clientTransferProhibited` |
 | Contact details | Read/update owned contact objects; existing shared contacts also affect their other domains |
@@ -53,7 +53,9 @@ An accepted pending transfer returns success to WHMCS so it stays in its normal 
 
 Definitively rejected jobs can be retried with corrected input. Uncertain jobs retain their original payload and cannot be replaced with different input. Resolve `unknown` jobs through the registrar's job reconciliation tools, then retry the original WHMCS action. Never delete a saved request to get past an unknown outcome. Expired/revoked bearer tokens are removed from the encrypted cache on HTTP 401; the next attempt logs in again. Password changes use a different token-cache key.
 
-Completed registration/transfer attempts remain tied to the WHMCS domain ID. A later, separate acquisition of the same name must use a new WHMCS domain record, or a registrar-assisted review of the retained records. Completed renewals are retained for each WHMCS expiry-date/term pair. Do not change the expiry date manually to bypass a pending renewal. Free completed updates can be repeated later. Raw credentials, contact data and registry responses are not written to module logs.
+Renewals also keep a per-domain outstanding-request reference independent of the current WHMCS expiry date and term. If domain sync advances the expiry after a timed-out registry success, retrying renewal resolves the original job and returns that result, even if the requested term changed. Pending, unknown and failed job reads keep this reference; confirmed success or definitive rejection clears it. A separate purchase can be submitted after the outstanding outcome has been returned.
+
+Completed registration/transfer attempts remain tied to the WHMCS domain ID. A later, separate acquisition of the same name must use a new WHMCS domain record, or a registrar-assisted review of the retained records. Completed renewals are retained for each original WHMCS expiry-date/term pair. Free completed updates can be repeated later. Raw credentials, contact data and registry responses are not written to module logs.
 
 ## Validation
 
