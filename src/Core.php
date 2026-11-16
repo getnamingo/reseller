@@ -601,6 +601,12 @@ final class CommandCatalog
         return array_key_exists($command, self::priceOperations());
     }
 
+    public static function canSetPrice(string $command, string $tld, int $period): bool
+    {
+        return self::requiresPrice($command) && ($command === 'domain.restore'
+            ? $period === 0 : $tld !== '' && $period >= 1 && $period <= 10);
+    }
+
     public static function priceKey(string $command, array $params): array
     {
         $name = isset($params['domainname']) ? Ownership::name($params['domainname'], 'domain') : '';

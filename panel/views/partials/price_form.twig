@@ -6,11 +6,8 @@
 <datalist id="price-scopes"><option value="global">Global defaults</option>{% for item in resellers %}<option value="{{ item.id }}">{{ item.username }} override</option>{% endfor %}</datalist>
 <p id="price-scope-help" class="form-hint">Choose a suggestion, or paste any reseller UUID. Suggestions show up to 500 accounts; use global for default prices.</p></div>
 <div class="col-md-3"><label class="form-label mb-3">Currency<input class="form-control" name="currency" pattern="[A-Za-z]{3}" maxlength="3" placeholder="EUR" required></label></div></div>
-<div class="table-responsive"><table class="table table-vcenter"><thead><tr><th>Years</th>{% for command, label in price_operations %}{% if command != 'domain.restore' %}<th>{{ label }}</th>{% endif %}{% endfor %}</tr></thead><tbody>
-{% for year in 1..10 %}<tr><th scope="row">{{ year }}</th>{% for command, label in price_operations %}{% if command != 'domain.restore' %}<td><input class="form-control price-amount" type="number" min="0" step="0.0001" name="amounts[{{ command }}][{{ year }}]" aria-label="{{ label }}, {{ year }} years" required></td>{% endif %}{% endfor %}</tr>{% endfor %}
-</tbody></table></div>
-<div class="mt-3"><label class="form-label mb-3">Restore — per operation<input class="form-control" type="number" min="0" step="0.0001" name="amounts[domain.restore][0]" required></label></div>
+{% include 'partials/price_fields.twig' %}
 <p class="text-secondary">Registration includes DNSSEC at the same price. Only incoming transfer requests are priced; transfer query, cancel, approve and reject are always free.</p>
-<p class="text-secondary">Existing rows for this exact TLD and scope are updated. Other operations cannot have prices. To change just one price, use Edit below.</p>
+<p class="text-secondary">Existing rows for this exact TLD and scope are updated. Other operations cannot have prices. Use Edit on a TLD group to load and update its whole table.</p>
 <button class="btn btn-primary">Save TLD price table</button>
 </form>

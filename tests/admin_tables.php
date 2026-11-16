@@ -59,11 +59,16 @@ try {
     }
     $panel = new PanelController($pdo, Twig::create(dirname(__DIR__) . '/panel/views', ['cache' => false, 'autoescape' => 'html']), new PanelApi(new Client()));
     PanelSession::login(Auth::login($pdo, 'admin', $password, '127.0.0.1'));
+    for ($i = 0; $i < 51; ++$i) {
+        $zone = sprintf('zone%02d', $i);
+        $pdo->prepare('INSERT INTO registry_tlds (registry_id, tld) VALUES (?, ?)')->execute([$registry, $zone]);
+        Admin::savePrice($pdo, $registry, CommandCatalog::GLOBAL_PRICE_UUID, 'domain.create', $zone, 1, '10', 'EUR');
+    }
     $prices = html('/admin/prices');
     check(str_contains($prices, 'data-bs-target="#add-price"') && str_contains($prices, 'modal-dialog-scrollable modal-xl'), 'Add price opens a large scrollable header modal');
-    check(strpos($prices, 'Configured prices') < strpos($prices, 'id="add-price"') && substr_count($prices, 'name="amounts[') === 31, 'Price list is primary; complete price editor is in modal');
-    check(rows($prices) === 50 && rows(html('/admin/prices?page=2')) === 12, 'Price table shows all rows through pagination');
-    check(substr_count($prices, 'data-price-edit=') === 50 && substr_count($prices, 'value="price.delete"') === 50, 'Price row edit/delete retained');
+    check(strpos($prices, 'TLD price groups') < strpos($prices, 'id="add-price"') && substr_count($prices, 'name="amounts[') === 62, 'Price list is primary; complete price editor is in modal');
+    check(rows($prices) === 50 && rows(html('/admin/prices?page=2')) === 3, 'Price table paginates whole TLD groups');
+    check(substr_count($prices, 'data-price-edit=') === 50 && substr_count($prices, 'value="price.group_delete"') === 50, 'Price row edit/delete retained');
     $pendingA = deposit('25'); $pendingR = deposit('30'); $approved = deposit('1', 'approved'); $rejected = deposit('1', 'rejected');
     $deposits = html('/admin/deposits'); $controls = actions($deposits);
     check(count($controls[$pendingA]) === 2 && $controls[$pendingA][0]['action'] === 'deposit.approve' && $controls[$pendingA][1]['action'] === 'deposit.reject', 'Pending deposit has row approve and reject controls');

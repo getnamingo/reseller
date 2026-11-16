@@ -158,6 +158,36 @@ final class Admin
                         $pdo->prepare('DELETE FROM reseller_tlds WHERE reseller_id = ? AND registry_id = ? AND tld = ?')
                             ->execute([$id('reseller_id'), $target, $metadata['tld']]);
                         break;
+                    case 'price.group_update':
+                    case 'price.group_delete':
+                        $target = $id('registry_id');
+                        $scope = $get('scope') === 'global' ? CommandCatalog::GLOBAL_PRICE_UUID : $id('scope');
+                        $tld = $get('tld') === '' ? '' : Access::tld($get('tld'));
+                        $currency = $get('currency');
+                        if (preg_match('/^[A-Z]{3}$/D', $currency) !== 1) { throw new ApiException(422, 'invalid_currency', 'Invalid group currency.'); }
+                        $stmt = $pdo->prepare('SELECT command, period, amount FROM registry_prices WHERE registry_id = ? AND reseller_id = ? AND tld = ? AND currency = ? ORDER BY command, period FOR UPDATE');
+                        $stmt->execute([$target, $scope, $tld, $currency]);
+                        $rows = $stmt->fetchAll();
+                        if ($rows === [] || !hash_equals(hash('sha256', Util::canonicalJson($rows)), $get('version'))) {
+                            throw new ApiException(409, 'price_group_changed', 'This price group changed or was removed. Reload the page before editing or deleting it.');
+                        }
+                        if ($action === 'price.group_delete') {
+                            $pdo->prepare('DELETE FROM registry_prices WHERE registry_id = ? AND reseller_id = ? AND tld = ? AND currency = ?')->execute([$target, $scope, $tld, $currency]);
+                        } else {
+                            if (array_filter($rows, fn ($row) => CommandCatalog::canSetPrice($row['command'], $tld, (int) $row['period'])) === []) {
+                                throw new ApiException(422, 'unsupported_price_group', 'This group contains only ignored legacy prices. Use Add price to configure supported prices.');
+                            }
+                            $other = $pdo->prepare('SELECT command, period FROM registry_prices WHERE registry_id = ? AND reseller_id = ? AND tld = ? AND currency <> ? FOR UPDATE');
+                            $other->execute([$target, $scope, $tld, $currency]);
+                            foreach ($other->fetchAll() as $row) {
+                                if (CommandCatalog::canSetPrice($row['command'], $tld, (int) $row['period'])) {
+                                    throw new ApiException(409, 'mixed_price_currency', 'This TLD has prices in another currency. Use Add price to replace the complete table in the intended currency.');
+                                }
+                            }
+                            self::savePriceTable($pdo, $target, $scope, $tld, $currency, $input['amounts'] ?? null);
+                        }
+                        $metadata = ['scope' => $scope, 'tld' => $tld, 'currency' => $currency, 'prices_before' => count($rows)];
+                        break;
                     case 'price.batch':
                         $zone = explode(':', $get('zone'), 2);
                         if (count($zone) !== 2 || !Util::isUuid($zone[0]) || $zone[1] === '') {
@@ -166,24 +196,7 @@ final class Admin
                         $target = strtolower($zone[0]);
                         $tld = Access::tld($zone[1]);
                         $scope = $get('scope') === 'global' ? CommandCatalog::GLOBAL_PRICE_UUID : $id('scope');
-                        $amounts = $input['amounts'] ?? null;
-                        $operations = CommandCatalog::priceOperations();
-                        if (!is_array($amounts) || count($amounts) !== count($operations) || array_diff(array_keys($amounts), array_keys($operations))) {
-                            throw new ApiException(422, 'invalid_price_table', 'Supply prices for exactly the four supported domain operations.');
-                        }
-                        foreach ($operations as $command => $label) {
-                            $periods = $command === 'domain.restore' ? [0] : range(1, 10);
-                            $values = $amounts[$command] ?? null;
-                            if (!is_array($values) || count($values) !== count($periods) || array_diff(array_keys($values), $periods)) {
-                                throw new ApiException(422, 'required_price', "Fill every {$label} price; enter 0 explicitly for free operations.");
-                            }
-                            foreach ($periods as $period) {
-                                if (!is_string($values[$period] ?? null) || trim($values[$period]) === '') {
-                                    throw new ApiException(422, 'required_price', "Enter {$label} price for term {$period}; use 0 explicitly for free operations.");
-                                }
-                                self::savePrice($pdo, $target, $scope, $command, $tld, $period, trim($values[$period]), $get('currency'));
-                            }
-                        }
+                        self::savePriceTable($pdo, $target, $scope, $tld, $get('currency'), $input['amounts'] ?? null);
                         $metadata = ['scope' => $scope, 'tld' => $tld, 'prices' => 31];
                         break;
                     case 'price.set':
@@ -235,6 +248,27 @@ final class Admin
         return $target ?? 'Saved';
     }
 
+    private static function savePriceTable(PDO $pdo, string $registry, string $scope, string $tld, string $currency, mixed $amounts): void
+    {
+        $operations = $tld === '' ? ['domain.restore' => 'Restore'] : CommandCatalog::priceOperations();
+        if (!is_array($amounts) || count($amounts) !== count($operations) || array_diff(array_keys($amounts), array_keys($operations))) {
+            throw new ApiException(422, 'invalid_price_table', 'Supply exactly the supported price operations for this group.');
+        }
+        foreach ($operations as $command => $label) {
+            $periods = $command === 'domain.restore' ? [0] : range(1, 10);
+            $values = $amounts[$command] ?? null;
+            if (!is_array($values) || count($values) !== count($periods) || array_diff(array_keys($values), $periods)) {
+                throw new ApiException(422, 'required_price', "Fill every {$label} price; enter 0 explicitly for free operations.");
+            }
+            foreach ($periods as $period) {
+                if (!is_string($values[$period] ?? null) || trim($values[$period]) === '') {
+                    throw new ApiException(422, 'required_price', "Enter {$label} price for term {$period}; use 0 explicitly for free operations.");
+                }
+                self::savePrice($pdo, $registry, $scope, $command, $tld, $period, trim($values[$period]), $currency);
+            }
+        }
+    }
+
     /** Shared price writer for authenticated administration and the local CLI. */
     public static function savePrice(PDO $pdo, string $registry, string $scope, string $command, string $tld, int $period, string $raw, string $currency): void
     {
@@ -242,9 +276,8 @@ final class Admin
         if (!CommandCatalog::requiresPrice($command)) {
             throw new ApiException(422, 'unsupported_price_command', 'Prices may only be set for domain.create, domain.renew, domain.restore and incoming domain.transfer.');
         }
-        if (!Util::isUuid($registry) || ($scope !== CommandCatalog::GLOBAL_PRICE_UUID && !Util::isUuid($scope)) || $period < 0 || $period > 10
-            || ($command !== 'domain.restore' && ($tld === '' || $period === 0))
-            || ($period > 0 && ($tld === '' || $command === 'domain.restore'))) {
+        if (!Util::isUuid($registry) || ($scope !== CommandCatalog::GLOBAL_PRICE_UUID && !Util::isUuid($scope))
+            || !CommandCatalog::canSetPrice($command, $tld, $period)) {
             throw new ApiException(422, 'invalid_price_scope', 'Term prices need a TLD and 1–10 years; only restore uses term 0. Transfer follow-ups are always free.');
         }
         if ($tld !== '') {

@@ -66,6 +66,44 @@ final class PanelData
         return $rows;
     }
 
+    public static function adminPriceGroups(PDO $pdo, int $limit, int $offset): array
+    {
+        $groups = self::rows($pdo, "SELECT p.registry_id, p.reseller_id AS scope_id, p.tld, p.currency,
+            r.name AS registry_name, COALESCE(u.username, 'Global defaults') AS scope_name,
+            CASE WHEN p.reseller_id = ? THEN 'global' ELSE p.reseller_id END AS scope, COUNT(*) AS price_count
+            FROM registry_prices p JOIN registries r ON r.id = p.registry_id LEFT JOIN resellers u ON u.id = p.reseller_id
+            GROUP BY p.registry_id, p.reseller_id, p.tld, p.currency, r.name, u.username
+            ORDER BY r.name, p.registry_id, p.tld, p.reseller_id, p.currency LIMIT " . $limit . ' OFFSET ' . $offset,
+            [CommandCatalog::GLOBAL_PRICE_UUID]);
+        if ($groups === []) { return []; }
+        $where = []; $params = [];
+        foreach ($groups as $group) {
+            $where[] = '(registry_id = ? AND reseller_id = ? AND tld = ? AND currency = ?)';
+            array_push($params, $group['registry_id'], $group['scope_id'], $group['tld'], $group['currency']);
+        }
+        $entries = self::rows($pdo, 'SELECT registry_id, reseller_id, tld, currency, command, period, amount FROM registry_prices WHERE '
+            . implode(' OR ', $where) . ' ORDER BY command, period', $params);
+        $byGroup = [];
+        foreach ($entries as $entry) {
+            $key = implode(':', [$entry['registry_id'], $entry['reseller_id'], $entry['tld'], $entry['currency']]);
+            $byGroup[$key][] = array_intersect_key($entry, array_flip(['command', 'period', 'amount']));
+        }
+        foreach ($groups as &$group) {
+            $key = implode(':', [$group['registry_id'], $group['scope_id'], $group['tld'], $group['currency']]);
+            $rows = $byGroup[$key] ?? [];
+            $group['version'] = hash('sha256', Util::canonicalJson($rows));
+            $group['prices'] = [];
+            foreach ($rows as $row) {
+                if (CommandCatalog::canSetPrice($row['command'], $group['tld'], (int) $row['period'])) {
+                    $group['prices'][$row['command']][$row['period']] = $row['amount'];
+                }
+            }
+            $group['editable'] = $group['prices'] !== [];
+        }
+        unset($group);
+        return $groups;
+    }
+
     public static function prices(PDO $pdo, string $reseller, array $filters = [], ?int $limit = null, int $offset = 0): array
     {
         $sql = "SELECT r.name AS registry, p.registry_id, p.command, p.tld, p.period,
