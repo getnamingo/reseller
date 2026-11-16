@@ -65,7 +65,7 @@ final class SelfService
                 if (!in_array($command, array_column(CommandCatalog::all(), 'command'), true)) {
                     throw new ApiException(422, 'invalid_filter', 'Invalid command filter.');
                 }
-                $filters['command'] = $command;
+                $filters['command'] = $command === 'domain.create_dnssec' ? 'domain.create' : $command;
             }
             $tld = self::text($query, 'tld');
             if ($tld !== '') {

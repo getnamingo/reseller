@@ -158,7 +158,7 @@ try {
     price('domain.create', '1001', 'org', 1);
     denied('insufficient_funds', fn () => job($a, 'domain.create', ['domainname' => 'poor.org', 'period' => 1]));
 
-    price('domain.transfer'); // Transfer follow-ups still require an explicit price.
+    price('domain.transfer', '2000', '', 0, null, 'USD'); // Deprecated transfer follow-up prices must be ignored.
     own('contact', 'a-contact', $a); own('contact', 'b-contact', $b);
     own('host', 'ns.one.com', $a);
     foreach (['domain.info', 'domain.delete', 'domain.update_contact', 'domain.update_ns'] as $command) {

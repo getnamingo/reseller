@@ -73,7 +73,8 @@ final class PanelData
             FROM registry_prices p JOIN registries r ON r.id = p.registry_id
             JOIN reseller_registries rr ON rr.registry_id = p.registry_id AND rr.reseller_id = ?
             WHERE rr.enabled = 1 AND r.enabled = 1 AND p.reseller_id IN (?, ?)
-              AND p.command IN ('domain.create', 'domain.create_dnssec', 'domain.renew', 'domain.restore', 'domain.transfer')
+              AND p.command IN ('domain.create', 'domain.renew', 'domain.restore', 'domain.transfer')
+              AND (p.command <> 'domain.transfer' OR p.period > 0)
               AND (p.tld = '' OR EXISTS (
                 SELECT 1 FROM reseller_tlds rt JOIN registry_tlds t ON t.registry_id = rt.registry_id AND t.tld = rt.tld
                 WHERE rt.registry_id = p.registry_id AND rt.reseller_id = ? AND rt.enabled = 1 AND t.enabled = 1
