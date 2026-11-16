@@ -1,0 +1,19 @@
+{
+    "name": "namingo/reseller-api-client",
+    "description": "Standalone PHP client for the Namingo reseller API",
+    "type": "library",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.2",
+        "ext-curl": "*",
+        "ext-json": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "Namingo\\ResellerClient\\": "src/"
+        }
+    },
+    "scripts": {
+        "test": "php tests/run.php"
+    }
+}
