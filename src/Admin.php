@@ -163,6 +163,9 @@ final class Admin
                         $target = $id('registry_id');
                         $command = $get('command');
                         CommandCatalog::method($command);
+                        if ($action === 'price.set' && !CommandCatalog::requiresPrice($command)) {
+                            throw new ApiException(422, 'unsupported_price_command', 'Prices may only be set for domain.create, domain.create_dnssec, domain.renew, domain.restore and domain.transfer.');
+                        }
                         $scope = $get('scope', 'global');
                         $scope = $scope === 'global' ? CommandCatalog::GLOBAL_PRICE_UUID : $id('scope');
                         $tld = $get('tld') === '' ? '' : Access::tld($get('tld'));

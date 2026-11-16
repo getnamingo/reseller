@@ -102,6 +102,37 @@ try {
     }
     denied('price_not_configured', fn () => job($a, 'domain.create', ['domainname' => 'absent.com', 'period' => 1]));
     check(countRows('epp_jobs') === 0 && countRows('object_ownership') === 0, 'Missing price must roll back job and reservation');
+    denied('price_not_configured', fn () => job($a, 'domain.create_dnssec', [
+        'domainname' => 'dnssec.com', 'period' => 1, 'authInfoPw' => 'secret',
+        'dnssec_records' => 1, 'keyTag_1' => 1, 'alg_1' => 13, 'digestType_1' => 2, 'digest_1' => '0123',
+    ]));
+    own('domain', 'restore-price.com', $a);
+    $pdo->prepare("UPDATE object_ownership SET domain_state = 'deleted' WHERE object_name = 'restore-price.com'")->execute();
+    denied('price_not_configured', fn () => job($a, 'domain.restore', ['domainname' => 'restore-price.com']));
+    own('domain', 'renew-price.com', $a);
+    denied('price_not_configured', fn () => job($a, 'domain.renew', ['domainname' => 'renew-price.com', 'regperiod' => 1]));
+    foreach (['hello' => [], 'domain.check' => ['domains' => ['free.com']]] as $command => $params) {
+        $j = job($a, $command, $params);
+        $stored = Ledger::fetchJob($pdo, $j['job_id']);
+        check($stored['price'] === '0.0000' && $stored['currency'] === 'EUR', 'Missing non-priced command price is free in wallet currency');
+        finish($j);
+    }
+    $pdo->prepare("UPDATE wallets SET currency = 'USD' WHERE reseller_id = ?")->execute([$b]);
+    $j = job($b, 'hello', []);
+    check(Ledger::fetchJob($pdo, $j['job_id'])['currency'] === 'USD', 'Free job uses non-EUR wallet currency');
+    finish($j);
+    $pdo->prepare("UPDATE wallets SET currency = 'EUR' WHERE reseller_id = ?")->execute([$b]);
+    $balanceBefore = $pdo->query("SELECT available_balance FROM wallets WHERE reseller_id = '$a'")->fetchColumn();
+    price('domain.check', '2000', '', 0, null, 'USD');
+    $j = job($a, 'domain.check', ['domains' => ['legacy.com']]);
+    check(Ledger::fetchJob($pdo, $j['job_id'])['price'] === '0.0000', 'Legacy nonzero price is ignored');
+    finish($j);
+    price('domain.check', '3', '', 0, $a);
+    $j = job($a, 'domain.check', ['domains' => ['legacy.com']]);
+    check(Ledger::fetchJob($pdo, $j['job_id'])['price'] === '0.0000', 'Legacy reseller override is ignored');
+    finish($j);
+    check($pdo->query("SELECT available_balance FROM wallets WHERE reseller_id = '$a'")->fetchColumn() === $balanceBefore, 'Ignored prices never hold or charge funds');
+    $pdo->prepare("DELETE FROM registry_prices WHERE command = 'domain.check'")->execute();
     price('domain.create', '1'); // Legacy catch-all must never price a term operation.
     denied('price_not_configured', fn () => job($a, 'domain.create', ['domainname' => 'absent.com', 'period' => 1]));
     price('domain.create', '12', 'com', 1);
@@ -127,11 +158,7 @@ try {
     price('domain.create', '1001', 'org', 1);
     denied('insufficient_funds', fn () => job($a, 'domain.create', ['domainname' => 'poor.org', 'period' => 1]));
 
-    foreach (['domain.info', 'domain.delete', 'domain.update_contact', 'domain.update_ns', 'domain.transfer',
-        'contact.create', 'contact.info', 'contact.update', 'contact.update_authinfo', 'contact.delete',
-        'host.create', 'host.update', 'host.info', 'host.delete', 'domain.check'] as $command) {
-        price($command); // Explicit free prices.
-    }
+    price('domain.transfer'); // Transfer follow-ups still require an explicit price.
     own('contact', 'a-contact', $a); own('contact', 'b-contact', $b);
     own('host', 'ns.one.com', $a);
     foreach (['domain.info', 'domain.delete', 'domain.update_contact', 'domain.update_ns'] as $command) {
@@ -149,7 +176,7 @@ try {
     $j = job($a, 'domain.update_contact', ['domainname' => 'one.com', 'contacttype' => 'registrant', 'new_contactid' => 'a-contact']); finish($j);
     $j = job($a, 'domain.update_ns', ['domainname' => 'one.com', 'ns1' => 'ns.shared.net']); finish($j);
     $j = job($b, 'domain.check', ['domains' => ['one.com']]); finish($j);
-    check(Ledger::fetchJob($pdo, $j['job_id'])['price'] === '0.0000', 'Explicit free check');
+    check(Ledger::fetchJob($pdo, $j['job_id'])['price'] === '0.0000', 'Check without a configured price is free');
 
     $key = Util::uuid(); $params = ['domainname' => 'pending.com', 'period' => 1];
     $j = job($a, 'domain.create', $params, $key);

@@ -373,6 +373,9 @@ try {
             $registryId = $uuid($arg(2, 'REGISTRY_UUID'), 'REGISTRY_UUID');
             $eppCommand = $arg(3, 'COMMAND');
             CommandCatalog::method($eppCommand);
+            if (!CommandCatalog::requiresPrice($eppCommand)) {
+                throw new RuntimeException('Prices may only be set for domain.create, domain.create_dnssec, domain.renew, domain.restore and domain.transfer.');
+            }
             $rawAmount = $arg(4, 'AMOUNT');
             $amount = preg_match('/^0(?:\.0{1,4})?$/D', $rawAmount) === 1 ? '0.0000' : Util::money($rawAmount);
             $currency = strtoupper($arg(5, 'CURRENCY'));

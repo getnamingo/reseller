@@ -97,13 +97,13 @@ try {
     verify(listing('domains', ['name' => 'private'])['data'] === [], 'Cannot search another reseller domain');
 
     $prices = listing('prices')['data'];
-    verify(count($prices) === 3, 'Only permitted effective own/global prices');
+    verify(count($prices) === 2, 'Only permitted effective prices for supported commands');
     verify(is_int($prices[0]['period']) && $prices[0]['registry_uuid'] === $registry, 'API price types and registry UUID field');
     verify(!str_contains(json_encode($prices), '999.0000') && !str_contains(json_encode($prices), 'net'), 'Other reseller overrides and forbidden zones excluded');
     $filtered = listing('prices', ['command' => 'domain.create', 'tld' => '.COM', 'period' => '1', 'registry_uuid' => $registry]);
     verify(count($filtered['data']) === 1 && $filtered['data'][0]['amount'] === '9.0000', 'Exact zone/term and reseller override');
-    verify(listing('prices', ['period' => '0'])['data'][0]['amount'] === '0.0000', 'Explicit free operation shown');
-    verify(count(listing('prices', ['limit' => 2, 'offset' => 2])['data']) === 1, 'Price pagination');
+    verify(listing('prices', ['period' => '0'])['data'] === [], 'Ignored legacy operation prices are excluded');
+    verify(count(listing('prices', ['limit' => 1, 'offset' => 1])['data']) === 1, 'Price pagination');
     verify(listing('prices', ['registry_uuid' => $otherRegistry])['data'] === [], 'Disabled registry prices excluded');
     $pdo->prepare('UPDATE reseller_registries SET enabled = 0 WHERE reseller_id = ? AND registry_id = ?')->execute([$a, $registry]);
     verify(listing('prices')['data'] === [] && count(listing('jobs')['data']) === 50 && count(listing('domains')['data']) === 2, 'Revoked access hides current prices while preserving own historical jobs and ownership');

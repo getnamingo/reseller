@@ -221,7 +221,7 @@ final class PanelController
                 break;
             case '/prices':
                 $data += ['title' => 'Your prices', 'rows' => PanelData::prices($this->pdo, $id),
-                    'note' => 'Total prices for each term. Term 0 is per operation. A blank TLD covers non-term operations across the registry. The longest matching zone takes priority, then your override. Missing prices block submission.',
+                    'note' => 'Total prices for each term. Term 0 is per operation. A blank TLD covers non-term operations across the registry. The longest matching zone takes priority, then your override. Only domain.create, domain.create_dnssec, domain.renew, domain.restore and domain.transfer require prices. All other commands are free; any old prices for them are ignored.',
                     'columns' => ['registry' => 'Registry', 'command' => 'Operation', 'tld' => 'TLD', 'period' => 'Years / 0 per operation', 'amount' => 'Total', 'currency' => 'Currency', 'scope' => 'Source']];
                 break;
             case '/wallet':
@@ -239,7 +239,7 @@ final class PanelController
                 break;
             case '/checks':
                 return $this->render($response, 'checks.twig', $data + ['title' => 'Domain availability', 'key' => Util::uuid(),
-                    'access' => PanelData::access($this->pdo, $id), 'prices' => array_values(array_filter(PanelData::prices($this->pdo, $id), fn ($p) => $p['command'] === 'domain.check')),
+                    'access' => PanelData::access($this->pdo, $id),
                     'jobs' => PanelData::rows($this->pdo, "SELECT id AS check_id, status, price, currency, created_at FROM epp_jobs WHERE reseller_id = ? AND command = 'domain.check' ORDER BY created_at DESC LIMIT 50", [$id])]);
             default:
                 throw new ApiException(404, 'not_found', 'Page was not found.');
