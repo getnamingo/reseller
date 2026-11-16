@@ -107,7 +107,7 @@ sudo COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --classmap-authoritati
 sudo chown -R root:namingo-api /opt/namingo-reseller-api
 sudo find /opt/namingo-reseller-api -type d -exec chmod 0750 {} \;
 sudo find /opt/namingo-reseller-api -type f -exec chmod 0640 {} \;
-sudo chmod 0750 bin/*.php client/*.php deploy/*.sh
+sudo chmod 0750 bin/*.php deploy/*.sh
 ```
 
 Create MariaDB credentials. Keep the same password in `.env`:
