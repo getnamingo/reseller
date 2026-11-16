@@ -13,7 +13,7 @@
 {% if user %}
 <header class="navbar navbar-expand-md navbar-light d-print-none">
   <div class="container-xl">
-    <a class="navbar-brand" href="/">Namingo <span class="text-secondary ms-1">Reseller</span></a>
+    <a class="navbar-brand" href="/">Namingo Reseller</a>
     <div class="navbar-nav flex-row ms-auto align-items-center gap-3">
       <a class="nav-link" href="/account"><span class="avatar avatar-sm bg-primary-lt me-2">{{ user.username|slice(0, 2)|upper }}</span><span class="text-truncate account-name">{{ user.username }}</span></a>
       <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-outline-secondary btn-sm">Sign out</button></form>
@@ -41,7 +41,7 @@
     {% if user %}<div class="page-header mb-4"><div class="row align-items-center g-2"><div class="col"><div class="page-pretitle">{{ section ? 'Administration' : 'Reseller workspace' }}</div><h1 class="page-title">{{ title }}</h1></div><div class="col-auto ms-auto d-print-none">{% block page_actions %}{% endblock %}</div></div></div>{% endif %}
     {% block content %}{% endblock %}
   </div></div>
-  <footer class="footer footer-transparent"><div class="container-xl text-center text-secondary">Namingo Reseller · Built on Argora Foundry</div></footer>
+  <footer class="footer footer-transparent"><div class="container-xl text-center text-secondary">Namingo Reseller</div></footer>
 </main>
 </div>
 {% include 'partials/js.twig' %}
