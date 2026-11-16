@@ -20,6 +20,7 @@
         cells[index][2].textContent = ['Queued', 'Processing', 'Pending'].includes(row.status) ? 'Checking…' : row.status;
         cells[index][3].textContent = row.reason;
       });
+      if (data.retryable === true) throw new Error('Job read temporarily unavailable');
       failures = 0;
       message.textContent = data.pending ? 'Checking… Results update automatically.' : 'Checks complete.';
       if (data.pending) setTimeout(refresh, 2000);

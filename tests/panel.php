@@ -260,6 +260,12 @@ try {
     $mock->append(new Response(200, [], Util::json(['data' => array_replace($queuedJob, ['status' => 'processing'])])));
     $poll = json_decode(body(request('/checks?batch=' . $slowKey . '&format=json')), true);
     verify($poll['pending'] && $poll['rows'][0]['status'] === 'Processing', 'Poll reports active work');
+    $mock->append(new Response(503, [], Util::json(['error' => ['message' => 'Temporary API outage.']])));
+    $outageHtml = body(request('/checks?batch=' . $slowKey));
+    verify(str_contains($outageHtml, 'data-pending="true"') && str_contains($outageHtml, 'Temporary API outage.'), 'Initial transient read failure keeps automatic polling enabled');
+    $mock->append(new Response(503, [], Util::json(['error' => ['message' => 'Temporary API outage.']])));
+    $outage = json_decode(body(request('/checks?batch=' . $slowKey . '&format=json')), true);
+    verify($outage['pending'] && $outage['retryable'] && $outage['rows'][0]['status'] === 'Pending', 'Transient API read failure is pending and eligible for bounded retry');
     $mock->append(new Response(200, [], Util::json(['data' => array_replace($queuedJob, ['status' => 'succeeded', 'result' => ['domains' => [['name' => 'slow.com', 'avail' => false]]]])])));
     $poll = json_decode(body(request('/checks?batch=' . $slowKey . '&format=json')), true);
     verify(!$poll['pending'] && $poll['rows'][0]['status'] === 'Unavailable' && end($history)['request']->getMethod() === 'GET', 'Poll returns final availability without resubmitting');
@@ -267,6 +273,12 @@ try {
     request('/checks?batch=' . $slowKey . '&format=json');
     verify(count($history) === $calls, 'Completed jobs are cached during later refreshes');
     verify(request('/checks?batch=' . Util::uuid() . '&format=json')->getStatusCode() === 404, 'Polling cannot read unknown session batches');
+
+    $forbiddenKey = Util::uuid();
+    $_SESSION['checks'][$forbiddenKey] = ['hash' => '', 'rows' => [['name' => 'forbidden.com', 'job_uuid' => Util::uuid()]]];
+    $mock->append(new Response(403, [], Util::json(['error' => ['message' => 'Job access denied.']])));
+    $forbidden = json_decode(body(request('/checks?batch=' . $forbiddenKey . '&format=json')), true);
+    verify(!$forbidden['pending'] && !$forbidden['retryable'] && $forbidden['rows'][0]['status'] === 'Failed', 'Permanent API read rejection does not retry');
 
     $second = action('registry.save', ['name' => 'Second registry', 'profile' => 'generic', 'config_json' => Util::json($config)]);
     action('registry.access', ['registry_id' => $second, 'reseller_id' => $a, 'enabled' => '1']);

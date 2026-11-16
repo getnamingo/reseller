@@ -239,9 +239,14 @@ final class PanelController
             $id = $row['job_uuid'];
             if (!isset($jobs[$id])) {
                 try { $jobs[$id] = $this->api->job($_SESSION['api_token'], $id); }
-                catch (ApiException $e) { $jobs[$id] = ['status' => 'Failed', 'result' => ['error' => $e->getMessage()]]; }
+                catch (ApiException $e) {
+                    $retryable = $e->httpStatus >= 500 || in_array($e->httpStatus, [408, 429], true);
+                    $jobs[$id] = ['status' => $retryable ? 'pending' : 'failed', 'retryable' => $retryable,
+                        'result' => ['error' => $e->getMessage()]];
+                }
             }
             $job = $jobs[$id];
+            $row['retryable'] = $job['retryable'] ?? false;
             if (in_array($job['status'] ?? '', ['succeeded', 'rejected', 'unknown'], true)) { $_SESSION['checks'][$key]['jobs'][$id] = $job; }
             $row['status'] = ucfirst($job['status'] ?? 'unknown');
             $row['reason'] = $job['result']['error'] ?? $job['result']['msg'] ?? $job['result']['message'] ?? '';
@@ -310,7 +315,8 @@ final class PanelController
                 $results = isset($query['batch']) ? $this->checkRows($query['batch']) : [];
                 $pending = array_filter($results, fn ($row) => in_array($row['status'], ['Queued', 'Processing', 'Pending'], true)) !== [];
                 if (($query['format'] ?? '') === 'json') {
-                    $response->getBody()->write(Util::json(['rows' => $results, 'pending' => $pending]));
+                    $response->getBody()->write(Util::json(['rows' => $results, 'pending' => $pending,
+                        'retryable' => array_filter($results, fn ($row) => $row['retryable'] ?? false) !== []]));
                     return $response->withHeader('Content-Type', 'application/json')->withHeader('Cache-Control', 'no-store');
                 }
                 return $this->render($response, 'checks.twig', $data + ['title' => 'Domain availability', 'key' => Util::uuid(),
