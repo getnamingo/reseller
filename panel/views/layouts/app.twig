@@ -38,7 +38,7 @@
   <div class="page-body"><div class="{{ user ? 'container-xl' : 'container-tight py-5' }}">
     {% if flash %}<div class="alert alert-success" role="status">{{ flash }}</div>{% endif %}
     {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
-    {% if user %}<div class="page-header mb-4"><div class="page-pretitle">{{ section ? 'Administration' : 'Reseller workspace' }}</div><h1 class="page-title">{{ title }}</h1></div>{% endif %}
+    {% if user %}<div class="page-header mb-4"><div class="row align-items-center g-2"><div class="col"><div class="page-pretitle">{{ section ? 'Administration' : 'Reseller workspace' }}</div><h1 class="page-title">{{ title }}</h1></div><div class="col-auto ms-auto d-print-none">{% block page_actions %}{% endblock %}</div></div></div>{% endif %}
     {% block content %}{% endblock %}
   </div></div>
   <footer class="footer footer-transparent"><div class="container-xl text-center text-secondary">Namingo Reseller · Built on Argora Foundry</div></footer>

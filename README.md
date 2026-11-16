@@ -661,6 +661,18 @@ the updated API/panel. Existing accounts receive empty optional details. Run
 `tests/admin_editing.php` with the documented `TEST_MYSQL_*` settings to verify account
 editing, token behavior, CLI commands, migration and safe TLD removal.
 
+### Managing resellers
+
+**Administration → Resellers** focuses on the account table (50 accounts per page).
+Select a reseller's username to manage it. **Add a reseller** is a button alongside the
+page title and opens a Tabler modal with the existing account-creation fields.
+
+Each reseller page has account details followed by three responsive cards for status,
+role and password reset. Token/session revocation is also available in the credentials
+card. These forms use the account UUID from the URL; no UUID entry is needed, and a
+submitted UUID cannot redirect an action to another account. Existing administrator,
+CSRF, self-demotion/self-suspension and session-revocation protections still apply.
+
 ### Install or upgrade
 
 For the standard demo layout, use `deploy/upgrade.sh` as described above.

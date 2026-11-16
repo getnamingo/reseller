@@ -73,14 +73,19 @@ final class PanelController
                     throw new ApiException(403, 'admin_required', 'Administrator access is required.');
                 }
                 if (preg_match('#^/admin/resellers/([a-f0-9-]{36})$#D', $path, $match)) {
-                    if ($method === 'POST') {
-                        Admin::perform($this->pdo, $this->user['id'], 'user.update', array_replace($input, ['reseller_id' => $match[1]]), $ip);
-                        $_SESSION['flash'] = 'Account saved. Username changes revoke existing API tokens and panel sessions.';
-                        return $this->redirect($response, $path);
-                    }
                     $accounts = PanelData::rows($this->pdo, 'SELECT id, username, display_name, company, email, phone, address, country_code, currency, status, role FROM resellers WHERE id = ?', [$match[1]]);
                     if ($accounts === []) { throw new ApiException(404, 'user_not_found', 'Reseller was not found.'); }
-                    return $this->render($response, 'account_edit.twig', ['title' => 'Edit reseller account', 'account' => $accounts[0]]);
+                    if ($method === 'POST') {
+                        $action = $input['action'] ?? 'user.update';
+                        if (!in_array($action, ['user.update', 'user.status', 'user.role', 'user.password', 'tokens.revoke'], true)) {
+                            throw new ApiException(422, 'invalid_action', 'Choose an action offered on this reseller page.');
+                        }
+                        // The URL selects the account; submitted UUIDs cannot retarget an action.
+                        Admin::perform($this->pdo, $this->user['id'], $action, array_replace($input, ['reseller_id' => $match[1]]), $ip);
+                        $_SESSION['flash'] = 'Account saved. Username, password or status changes may revoke its API tokens and panel sessions.';
+                        return $this->redirect($response, $path);
+                    }
+                    return $this->render($response, 'account_edit.twig', ['title' => 'Manage reseller: ' . $accounts[0]['username'], 'section' => 'resellers', 'account' => $accounts[0]]);
                 }
                 if ($method === 'GET' && preg_match('#^/admin/jobs/([a-f0-9-]{36})$#D', $path, $match)) {
                     $job = Ledger::fetchJob($this->pdo, $match[1]);
@@ -341,7 +346,7 @@ final class PanelController
         $offset = ($page - 1) * 50;
         [$sql, $columns] = match ($section) {
             'resellers' => ['SELECT r.id AS account_id, r.username, r.display_name, r.company, r.email, r.role, r.status, r.currency, w.available_balance, w.held_balance FROM resellers r JOIN wallets w ON w.reseller_id = r.id ORDER BY r.username',
-                ['account_id' => 'UUID / edit', 'username' => 'Username', 'display_name' => 'Name', 'company' => 'Company', 'email' => 'Email', 'role' => 'Role', 'status' => 'Status', 'currency' => 'Currency', 'available_balance' => 'Available', 'held_balance' => 'Held']],
+                ['account_id' => 'Reseller', 'display_name' => 'Name', 'company' => 'Company', 'email' => 'Email', 'role' => 'Role', 'status' => 'Status', 'currency' => 'Currency', 'available_balance' => 'Available', 'held_balance' => 'Held']],
             'registries' => ['SELECT id, name, profile, enabled FROM registries ORDER BY name', ['id' => 'UUID', 'name' => 'Registry', 'profile' => 'Profile', 'enabled' => 'Enabled']],
             'tlds' => ['SELECT t.registry_id, r.name AS registry, t.tld, t.enabled FROM registry_tlds t JOIN registries r ON r.id = t.registry_id ORDER BY r.name, t.tld',
                 ['registry_id' => 'Registry UUID', 'registry' => 'Registry', 'tld' => 'TLD', 'enabled' => 'Enabled', 'tld_actions' => 'Edit / remove']],
