@@ -1,34 +1,15 @@
 {% extends 'layouts/app.twig' %}
 {% import 'partials/table.twig' as tables %}
 {% import 'partials/forms.twig' as forms %}
-{% block page_actions %}{% if section == 'resellers' %}<button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#add-reseller">Add a reseller</button>{% endif %}{% endblock %}
+{% block page_actions %}{% if section == 'resellers' %}<button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#add-reseller">Add a reseller</button>{% elseif section == 'registries' %}<div class="btn-list"><button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#add-registry">Add a registry</button><button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#add-tld">Add TLD</button></div>{% endif %}{% endblock %}
 {% block content %}
 <datalist id="resellers">{% for item in resellers %}<option value="{{ item.id }}">{{ item.username }}</option>{% endfor %}</datalist>
 <datalist id="registries">{% for item in registries %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</datalist>
-<div class="{{ section in ['prices', 'resellers'] ? 'mb-4' : 'action-grid mb-4' }}">
+<div class="{{ section in ['prices', 'resellers', 'registries'] ? 'mb-4' : 'action-grid mb-4' }}">
 {% if section == 'resellers' %}
 <p class="text-secondary">Select a reseller to manage account details, status, role and credentials.</p>
 {% elseif section == 'registries' %}
-<div class="card card-body"><h2 class="card-title">Add or update a registry</h2><form method="post">{{ forms.hidden('registry.save', csrf) }}
-  {{ forms.input('registry_id', 'Existing registry UUID (blank to add)', 'text', '', 'registries', false) }}{{ forms.input('name', 'Display name') }}
-  <label class="form-label mb-3">EPP profile<select class="form-select" name="profile">{% for profile in profiles %}<option>{{ profile }}</option>{% endfor %}</select></label>
-  <label class="form-label mb-3">Full registry configuration JSON<textarea class="form-control" name="config_json" rows="8" required autocomplete="off" spellcheck="false"></textarea></label>
-  <p class="text-secondary">Use deploy/registry.example.json. Stored credentials are encrypted and never displayed. Keep one registry UUID per upstream account; updates must remain on that same account.</p><button class="btn btn-primary">Save registry</button>
-</form></div>
-<div class="card card-body"><h2 class="card-title">Registry state</h2><form method="post">{{ forms.hidden('registry.status', csrf) }}
-  {{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{{ forms.enabled() }}<button class="btn btn-primary">Save state</button>
-</form><hr><h2 class="card-title">Reseller access</h2><form method="post">{{ forms.hidden('registry.access', csrf) }}
-  {{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}{{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{{ forms.enabled() }}<button class="btn btn-outline-primary">Save access</button>
-</form></div>
-{% elseif section == 'tlds' %}
-<div class="card card-body"><h2 class="card-title">Add or edit a TLD</h2><form method="post">{{ forms.hidden('tld.save', csrf) }}
-  {{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{{ forms.input('tld', 'TLD / suffix (com or co.uk)') }}{{ forms.enabled() }}<button class="btn btn-primary">Save TLD</button>
-</form></div>
-<p class="text-secondary">The table offers enable/disable and removal controls for each TLD. Removing an unused TLD deletes its assignments and exact TLD prices. Owned domains or any unsettled registry jobs block removal; disable an in-use TLD instead. To correct an unused suffix, remove it and add the correct one.</p>
-<div class="card card-body"><h2 class="card-title">Permit a TLD for a reseller</h2><form method="post">{{ forms.hidden('tld.access', csrf) }}
-  {{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}{{ forms.input('registry_id', 'Registry UUID', 'text', '', 'registries') }}{{ forms.input('tld', 'TLD / suffix') }}{{ forms.enabled() }}
-  <p class="text-secondary">Grant registry access first. Both the registry and TLD permissions must be enabled. The API enforces these permissions too.</p><button class="btn btn-primary">Save permission</button>
-</form></div>
+<p class="text-secondary">Choose a registry to edit its settings, manage TLDs or configure TLD permissions.</p>
 {% elseif section == 'prices' %}
 {% include 'partials/price_form.twig' %}
 {% elseif section == 'deposits' %}
@@ -53,9 +34,8 @@
 </form></div>
 {% endif %}
 </div>
-{% if section == 'prices' %}{% include 'partials/price_list.twig' %}{% else %}<div class="card">{{ tables.show(rows, columns, csrf) }}</div>{% endif %}
+{% if section == 'prices' %}{% include 'partials/price_list.twig' %}{% elseif section == 'registries' %}{% include 'partials/registry_list.twig' %}{% else %}<div class="card">{{ tables.show(rows, columns, csrf) }}</div>{% endif %}
 {% include 'partials/pagination.twig' %}
-{% if grants is defined %}<div class="card mt-4"><div class="card-header"><h2 class="card-title">Permission records (up to 100)</h2></div>{{ tables.show(grants, grant_columns, csrf) }}</div>{% endif %}
 {% if section == 'resellers' %}
 <div class="modal modal-blur fade" id="add-reseller" tabindex="-1" aria-labelledby="add-reseller-title" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><form method="post" class="modal-content">{{ forms.hidden('user.create', csrf) }}
 <div class="modal-header"><h2 class="modal-title" id="add-reseller-title">Add a reseller</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
@@ -63,5 +43,13 @@
 <p class="text-secondary mb-0">New accounts have reseller role 1. Their API and panel credentials are shared.</p></div>
 <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary">Create reseller</button></div>
 </form></div></div>
+{% endif %}
+{% if section == 'registries' %}
+<div class="modal modal-blur fade" id="add-registry" tabindex="-1" aria-labelledby="add-registry-title" aria-hidden="true"><div class="modal-dialog modal-dialog-centered modal-lg"><form method="post" class="modal-content">{{ forms.hidden('registry.save', csrf) }}
+<div class="modal-header"><h2 class="modal-title" id="add-registry-title">Add a registry</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+<div class="modal-body">{{ forms.input('name', 'Display name') }}<label class="form-label mb-3">EPP profile<select class="form-select" name="profile">{% for profile in profiles %}<option>{{ profile }}</option>{% endfor %}</select></label>
+<label class="form-label mb-3">Full registry configuration JSON<textarea class="form-control" name="config_json" rows="8" required autocomplete="off" spellcheck="false"></textarea></label><p class="text-secondary">Use deploy/registry.example.json. Credentials are encrypted and never displayed.</p></div>
+<div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary">Create registry</button></div></form></div></div>
+{% include 'partials/add_tld_modal.twig' %}
 {% endif %}
 {% endblock %}

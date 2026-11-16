@@ -28,8 +28,8 @@
 {% if user.role == 0 %}
 <nav class="navbar navbar-light border-top" aria-label="Administration"><div class="container-xl"><div class="nav nav-pills gap-1 flex-wrap">
   <span class="nav-link text-primary fw-bold">Administration</span>
-  {% for section in ['resellers', 'registries', 'tlds', 'prices', 'deposits', 'jobs', 'ownership'] %}
-    <a class="nav-link" href="/admin/{{ section }}">{{ section == 'tlds' ? 'TLDs' : section|capitalize }}</a>
+  {% for section in ['resellers', 'registries', 'prices', 'deposits', 'jobs', 'ownership'] %}
+    <a class="nav-link" href="/admin/{{ section }}">{{ section|capitalize }}</a>
   {% endfor %}
 </div></div></nav>
 {% endif %}
