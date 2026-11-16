@@ -90,6 +90,36 @@ try {
     $backgroundOp=Domains::operations($pdo,$actor,$background['key'])[0];
     check($backgroundOp['data']['steps'][1]['job_uuid']!==null,'Background tick advances saved plans without a page request');
     drain($background['key'],$actor);
+    // Both bulk members observe availability before either host-create reservation exists.
+    $shared=['key'=>Util::uuid(),'action'=>'create','domains'=>"shared-a.com\nshared-b.com",'ns1'=>'ns-shared.example.net'];
+    $hostCount=(int)value("SELECT COUNT(*) FROM epp_jobs WHERE command='host.create'");
+    Domains::submit($pdo,$actor,$shared,'127.0.0.1');
+    foreach(Domains::operations($pdo,$actor,$shared['key']) as $op) {
+        Ledger::completeJob($pdo,$op['data']['steps'][0]['job_uuid'],'succeeded',
+            ['code'=>1000,'hosts'=>[['name'=>'ns-shared.example.net','avail'=>1]]],1000);
+    }
+    Domains::refresh($pdo,$actor,$shared['key']);
+    $sharedOps=Domains::operations($pdo,$actor,$shared['key']);
+    check((int)value("SELECT COUNT(*) FROM epp_jobs WHERE command='host.create'")===$hostCount+1,'Bulk members share one host-create reservation');
+    check(count(array_filter($sharedOps,fn($op)=>$op['status']==='rejected'))===0,'Host reservation does not reject the waiting bulk member');
+    foreach($sharedOps as $op) {
+        $step=$op['data']['steps'][1];
+        if($step['job_uuid']!==null) {
+            $lost=$op['data']; $lost['steps'][1]['job_uuid']=null; $lost['steps'][1]['status']='prepared';
+            [$nonce,$cipher]=Crypto::encrypt(Util::json($lost),'panel-domain:'.$op['id']);
+            $pdo->prepare("UPDATE panel_domain_operations SET status='prepared',data_nonce=?,data_cipher=? WHERE id=?")->execute([$nonce,$cipher,$op['id']]);
+            Domains::refresh($pdo,$actor,$shared['key']);
+            $recovered=array_values(array_filter(Domains::operations($pdo,$actor,$shared['key']),fn($row)=>$row['id']===$op['id']))[0];
+            check($recovered['data']['steps'][1]['job_uuid']===$step['job_uuid'],'Shared host owner recovers its own lost job UUID instead of waiting on itself');
+        }
+    }
+    foreach($sharedOps as $op) {
+        $step=$op['data']['steps'][1];
+        if($step['job_uuid']!==null) { Ledger::completeJob($pdo,$step['job_uuid'],'succeeded',['code'=>1000],1000); }
+    }
+    drain($shared['key'],$actor);
+    check(count(array_filter(Domains::operations($pdo,$actor,$shared['key']),fn($op)=>$op['status']==='succeeded'))===2,'Both domains register after the shared host completes');
+    check((int)value("SELECT COUNT(*) FROM epp_jobs WHERE command='host.create'")===$hostCount+1,'Successful shared host is reused without another create');
     $count=value('SELECT COUNT(*) FROM epp_jobs');
     check(request('/domains','POST',$create)->getStatusCode()===303 && value('SELECT COUNT(*) FROM epp_jobs')===$count,'Repeated form resumes original jobs');
     $changed=$create; $changed['years']='2';
@@ -135,9 +165,48 @@ try {
     check(Domains::owned($pdo,$admin,$registry,'one.com')['active']==='1','Rejected delete preserves ownership');
     $retry=$delete; $retry['key']=Util::uuid(); Domains::submit($pdo,$admin,$retry,'127.0.0.1',$domain); drain($retry['key'],$admin);
     check(value("SELECT domain_state FROM object_ownership WHERE registry_id=? AND object_name='one.com'",[$registry])==='deleted','Successful delete preserves the API redemption state');
+    // Pending restores keep their reservation while the API permits report and info follow-ups.
+    $pdo->prepare("INSERT INTO registry_prices (registry_id,command,tld,period,amount,currency) VALUES (?,'domain.restore','',0,25,'EUR')")->execute([$registry]);
+    $deletedDomain=Domains::owned($pdo,$admin,$registry,'one.com');
+    $restore=['key'=>Util::uuid(),'action'=>'restore'];
+    Domains::submit($pdo,$admin,$restore,'127.0.0.1',$deletedDomain);
+    $restoreOp=Domains::operations($pdo,$admin,$restore['key'])[0]; $restoreJob=$restoreOp['data']['steps'][0]['job_uuid'];
+    Ledger::completeJob($pdo,$restoreJob,'pending',['code'=>1001],1001);
+    Domains::refresh($pdo,$admin,$restore['key']);
+    $sync=['key'=>Util::uuid(),'action'=>'sync'];
+    Domains::submit($pdo,$admin,$sync,'127.0.0.1',$deletedDomain);
+    $syncOp=Domains::operations($pdo,$admin,$sync['key'])[0]; $syncJob=$syncOp['data']['steps'][0]['job_uuid'];
+    check($syncJob!==null && Ledger::fetchJob($pdo,$syncJob,$a)['parent_job_uuid']===$restoreJob,'Sync follows a pending restore through the API rule');
+    drain($sync['key'],$admin);
+    $paidCount=value("SELECT COUNT(*) FROM epp_jobs WHERE command='domain.renew'");
+    Domains::submit($pdo,$admin,['key'=>Util::uuid(),'action'=>'renew','years'=>'1'],'127.0.0.1',$deletedDomain);
+    check(value("SELECT COUNT(*) FROM epp_jobs WHERE command='domain.renew'")===$paidCount,'Pending restore still blocks unrelated paid writes');
+    $reportParams=['pre_data'=>'Before restoration','post_data'=>'After restoration','deleted_at'=>'2026-01-01T12:00:00Z',
+        'restored_at'=>'2026-01-02T12:00:00Z','reason'=>'Registrant request',
+        'statements'=>['Accurate first registrar statement','Accurate second registrar statement']];
+    $report=['key'=>Util::uuid(),'action'=>'restore_report','native'=>Util::json($reportParams)];
+    Domains::submit($pdo,$admin,$report,'127.0.0.1',$deletedDomain);
+    $reportOp=Domains::operations($pdo,$admin,$report['key'])[0]; $reportJob=$reportOp['data']['steps'][0]['job_uuid'];
+    check($reportJob!==null && Ledger::fetchJob($pdo,$reportJob,$a)['parent_job_uuid']===$restoreJob,'Restore report follows the outstanding restore plan');
+    Ledger::completeJob($pdo,$reportJob,'succeeded',['code'=>1000],1000);
+    drain($report['key'],$admin);
+    Ledger::completeJob($pdo,$restoreJob,'succeeded',['code'=>1000],1000,true);
+    drain($restore['key'],$admin);
+    // A queued panel query must not prevent a second API-permitted transfer follow-up.
+    $pdo->prepare("INSERT INTO registry_prices (registry_id,command,tld,period,amount,currency) VALUES (?,'domain.transfer','com',1,10,'EUR')")->execute([$registry]);
+    $incoming=Ledger::createJob($pdo,$a,$registry,'domain.transfer','transfer-fixture-'.Util::uuid(),
+        ['domainname'=>'incoming.com','op'=>'request','years'=>1,'authInfoPw'=>'TransferSecret!123']);
+    Ledger::completeJob($pdo,$incoming['job_id'],'pending',['code'=>1001,'trStatus'=>'pending'],1001);
+    $incomingDomain=Domains::owned($pdo,$admin,$registry,'incoming.com');
+    foreach(['query','cancel'] as $op) {
+        $follow=['key'=>Util::uuid(),'action'=>'transfer','native'=>Util::json(['op'=>$op])];
+        Domains::submit($pdo,$admin,$follow,'127.0.0.1',$incomingDomain);
+        $followOp=Domains::operations($pdo,$admin,$follow['key'])[0]; $followJob=$followOp['data']['steps'][0]['job_uuid'];
+        check($followJob!==null && Ledger::fetchJob($pdo,$followJob,$a)['parent_job_uuid']===$incoming['job_id'],'Transfer '.$op.' keeps the API parent reservation despite an outstanding panel plan');
+    }
     for($i=0;$i<55;++$i){$pdo->prepare("INSERT INTO object_ownership (registry_id,object_type,object_name,reseller_id,active) VALUES (?,'domain',?,?,1)")->execute([$registry,sprintf('page-%02d.com',$i),$b]);}
     $listing=Domains::listing($pdo,$admin,1); check(count($listing['rows'])===50 && $listing['next'],'Domain list pagination');
-    check(count(Domains::listing($pdo,$actor,1)['rows'])===4,'Pagination keeps reseller scope');
+    check(count(Domains::listing($pdo,$actor,1)['rows'])===7,'Pagination keeps reseller scope');
     $pdo->exec('DROP TABLE panel_domain_operations'); $pdo->exec("DELETE FROM schema_migrations WHERE version='007_panel_domains'");
     $pdo->exec(file_get_contents(dirname(__DIR__).'/database/007_panel_domains.sql'));
     $pdo->exec(file_get_contents(dirname(__DIR__).'/database/007_panel_domains.sql'));

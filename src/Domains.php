@@ -83,9 +83,12 @@ final class Domains
                     $reg = PanelData::rows($pdo, 'SELECT profile FROM registries WHERE id = ?', [$row['registry_id']])[0];
                     $busy = PanelData::rows($pdo, "SELECT id FROM panel_domain_operations WHERE reseller_id = ? AND registry_id = ? AND domainname = ?
                         AND status IN ('prepared','queued','processing','pending','unknown') LIMIT 1", [$owner, $row['registry_id'], $row['domainname']]);
-                    if ($busy) { throw new ApiException(409, 'domain_busy', 'An existing operation must finish or be reconciled before another request.'); }
+                    $steps = DomainParams::plan($reg['profile'], $action, $row['domainname'], $input);
+                    if ($busy && !self::followup($pdo, $owner, $row['registry_id'], $row['domainname'], $steps[0])) {
+                        throw new ApiException(409, 'domain_busy', 'An existing operation must finish or be reconciled before another request.');
+                    }
                     Access::domains($pdo, $row['registry_id'], $owner, $action === 'create' ? 'domain.create' : 'domain.info', ['domainname' => $row['domainname']]);
-                    $row['data']['steps'] = DomainParams::plan($reg['profile'], $action, $row['domainname'], $input);
+                    $row['data']['steps'] = $steps;
                 } catch (ApiException $e) { $row['status'] = 'rejected'; $row['data']['message'] = $e->errorCode . ': ' . $e->getMessage(); }
                 $prepared[] = $row;
             }
@@ -104,6 +107,15 @@ final class Domains
         });
     }
 
+    private static function followup(PDO $pdo, string $owner, string $registry, string $name, array $step): bool
+    {
+        $parent = PanelData::rows($pdo, "SELECT j.*, o.active AS owned_active FROM object_ownership o
+            JOIN epp_jobs j ON j.id = o.job_id AND j.reseller_id = o.reseller_id AND j.registry_id = o.registry_id
+            WHERE o.object_type = 'domain' AND o.reseller_id = ? AND o.registry_id = ? AND o.object_name = ?",
+            [$owner, $registry, $name])[0] ?? null;
+        return $parent !== null && Lifecycle::followup($parent, $step['command'], $step['params']);
+    }
+
     /** At most one bounded chain per saved intent; Ledger recovers a lost job UUID by key. */
     private static function advance(PDO $pdo, array $row, array $actor): array
     {
@@ -113,6 +125,12 @@ final class Domains
             if (in_array($step['status'], ['succeeded', 'skipped'], true)) { continue; }
             $row['status'] = 'prepared';
             try {
+                if ($step['job_uuid'] === null && isset($step['check'])) {
+                    // Recover our own committed create before treating its reservation as shared.
+                    $saved = PanelData::rows($pdo, 'SELECT id FROM epp_jobs WHERE reseller_id = ? AND registry_id = ? AND command = ? AND idempotency_key = ?',
+                        [$row['reseller_id'], $row['registry_id'], $step['command'], 'panel-domain-' . $row['id'] . '-' . $i])[0] ?? null;
+                    if ($saved !== null) { $step['job_uuid'] = $saved['id']; }
+                }
                 if ($step['job_uuid'] === null) {
                     if (isset($step['check'])) {
                         $check = $row['data']['steps'][$step['check']]['result']['hosts'] ?? [];
@@ -121,6 +139,19 @@ final class Domains
                             throw new ApiException(422, 'invalid_host_check', 'The registry did not return a definite availability result for this host.');
                         }
                         if (!(bool) $matched[0]['avail']) { $step['status'] = 'skipped'; continue; }
+                        // Other bulk members may have observed availability before the first create.
+                        // Consult the shared ownership reservation instead of submitting another create.
+                        $host = PanelData::rows($pdo, "SELECT active, job_id FROM object_ownership
+                            WHERE registry_id = ? AND object_type = 'host' AND object_name = ?",
+                            [$row['registry_id'], $step['params']['hostname']])[0] ?? null;
+                        if ($host !== null && $host['job_id'] !== null) {
+                            $step['message'] = 'Waiting for the shared nameserver operation to complete.';
+                            break;
+                        }
+                        if ($host !== null && (bool) $host['active']) {
+                            $step['status'] = 'skipped'; $step['message'] = 'Shared nameserver is available; reused.';
+                            continue;
+                        }
                     }
                     self::throttle($pdo, $actor['id']);
                     $job = Ledger::createJob($pdo, $row['reseller_id'], $row['registry_id'], $step['command'], 'panel-domain-' . $row['id'] . '-' . $i, $step['params']);
@@ -136,7 +167,12 @@ final class Domains
                 if ($job['status'] !== 'succeeded') { break; }
             } catch (ApiException $e) {
                 $step['message'] = $e->errorCode . ': ' . $e->getMessage();
-                if ($step['job_uuid'] !== null) { $row['status'] = $step['status']; $row['data']['retry_at'] = time() + 10; }
+                if ($step['job_uuid'] === null && $step['command'] === 'host.create' && isset($step['check']) && $e->errorCode === 'object_busy') {
+                    // A competing API create can reserve the host after the check above.
+                    // Revisit that reservation next tick without replacing the frozen step key.
+                    $row['status'] = 'prepared';
+                }
+                elseif ($step['job_uuid'] !== null) { $row['status'] = $step['status']; $row['data']['retry_at'] = time() + 10; }
                 elseif (in_array($e->httpStatus, [400, 402, 403, 404, 409, 422, 428], true)) { $step['status'] = $row['status'] = 'rejected'; }
                 else { $row['data']['retry_at'] = time() + 10; $row['status'] = 'prepared'; }
                 break;
