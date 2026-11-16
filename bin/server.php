@@ -71,7 +71,7 @@ $settings = [
     'package_max_length' => max(1024, Config::int('API_MAX_BODY_BYTES', 262144)),
     'http_compression' => true,
     'http_compression_level' => 4,
-    'log_file' => '/dev/stderr',
+    'log_file' => '/run/namingo-epp-api/swoole.log',
     'daemonize' => false,
 ];
 if ($tls) {
