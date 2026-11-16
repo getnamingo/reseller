@@ -153,18 +153,21 @@ Other endpoints:
 - `GET /v1/jobs/{uuid}`
 - `POST /v1/logout`
 
-Run the Guzzle example:
+Use the [standalone PHP client](../plugins/php-client/README.md) from your own applications or run its availability example:
 
 ```bash
-export API_BASE_URL=https://api.example.test or API_BASE_URL=http://127.0.0.1:9501
-export API_USERNAME=reseller1
-export API_PASSWORD='reseller-password'
-export API_REGISTRY_UUID=REGISTRY_UUID
+export API_BASE_URL=https://api.example.test
+export NAMINGO_API_URL="$API_BASE_URL"
+export NAMINGO_USERNAME=reseller1
+export NAMINGO_API_PASSWORD='reseller-api-password'
+export NAMINGO_REGISTRY_UUID=REGISTRY_UUID
 
-php8.5 client/example.php domain.check '{"domains":["example.test"]}'
+php plugins/php-client/examples/check.php example.test
 ```
 
-`API_CA_BUNDLE=/path/to/private-ca.pem` may be set for a private CA. The sample never disables TLS verification and refuses non-HTTPS URLs except loopback development addresses.
+The client requires PHP 8.2+, JSON and cURL, independently of the server's Composer project. Use an HTTPS API endpoint. For a private CA, configure `CurlTransport(caFile: '/path/to/private-ca.pem')` as shown in the [transport documentation](../plugins/php-client/README.md#transport-and-low-level-requests); certificate verification stays enabled.
+
+The client supports all exposed commands through `epp()`, job polling, account/price access and deposit requests. For writes, persist the exact payload and idempotency key before submitting, and reuse them on retries; see the [write and retry guidance](../plugins/php-client/README.md#writes-paid-operations-and-retries).
 
 ## Deposits and reconciliation
 
