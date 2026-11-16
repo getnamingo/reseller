@@ -198,6 +198,28 @@ final class ProfileParams
         ],
     ];
 
+    /** The panel uses the same pinned parameter names and requirements as API submission. */
+    public static function contactFields(): array
+    {
+        $fields = explode(' ', self::REQUIRED['contactCreate'] . ' address3 fax');
+        foreach (self::OVERRIDES as $methods) {
+            foreach (['contactCreate', 'contactUpdate', 'contactDelete', 'contactUpdateAuthinfo'] as $method) {
+                foreach (explode(' ', $methods[$method] ?? '') as $field) {
+                    if ($field !== '' && !in_array($field, ['contact', 'contactid', 'authInfo'], true)) { $fields[] = $field; }
+                }
+            }
+        }
+        return array_values(array_unique($fields));
+    }
+
+    public static function contactRequired(string $profile, string $command): array
+    {
+        $method = CommandCatalog::method($command);
+        $overrides = self::OVERRIDES[$profile] ?? [];
+        $fields = array_key_exists($method, $overrides) ? $overrides[$method] : (self::REQUIRED[$method] ?? '');
+        return $fields === null || $fields === '' ? [] : explode(' ', $fields);
+    }
+
     public static function validate(string $profile, string $command, array $params): void
     {
         $method = CommandCatalog::method($command);

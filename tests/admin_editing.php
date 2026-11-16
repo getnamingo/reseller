@@ -31,7 +31,7 @@ try{
     $pdo->exec("ALTER TABLE resellers DROP COLUMN display_name,DROP COLUMN company,DROP COLUMN email,DROP COLUMN phone,DROP COLUMN address,DROP COLUMN country_code");
     $pdo->exec("DELETE FROM schema_migrations WHERE version='005_account_details'");
     foreach([1,2] as $_){$result=cli(['migrate']);check($result[0]===0,'Migration command succeeds: '.$result[2]);}
-    check((int)$pdo->query('SELECT COUNT(*) FROM schema_migrations')->fetchColumn()===5,'v4-to-v5 migration records version once');
+    check((int)$pdo->query('SELECT COUNT(*) FROM schema_migrations')->fetchColumn()===6,'v4-to-v5 migration records version once');
     $token=Auth::login($pdo,'original-user',$pw,'127.0.0.1')['access_token'];
     $details=['display_name'=>'Илия','company'=>'Example Ltd','email'=>'contact@example.com','phone'=>'+359 123 456','address'=>"Street 1\nSofia 1000",'country_code'=>'bg'];
     Admin::perform($pdo,$root,'user.update',['reseller_id'=>$a]+$details,'127.0.0.1');

@@ -23,12 +23,12 @@
 <nav class="navbar navbar-light" aria-label="Main navigation"><div class="container-xl"><div class="nav nav-pills gap-1 flex-wrap">
   <a class="nav-link" href="/">Dashboard</a><a class="nav-link" href="/checks">Availability</a>
   <a class="nav-link" href="/prices">Prices</a>
-  <a class="nav-link" href="/wallet">Wallet</a><a class="nav-link" href="/jobs">Jobs</a><a class="nav-link" href="/domains">Objects</a><a class="nav-link" href="/account">Account</a>
+  <a class="nav-link" href="/wallet">Wallet</a><a class="nav-link" href="/jobs">Jobs</a><a class="nav-link" href="/domains">Domains</a><a class="nav-link" href="/contacts">Contacts</a><a class="nav-link" href="/account">Account</a>
 </div></div></nav>
 {% if user.role == 0 %}
 <nav class="navbar navbar-light border-top" aria-label="Administration"><div class="container-xl"><div class="nav nav-pills gap-1 flex-wrap">
   <span class="nav-link text-primary fw-bold">Administration</span>
-  {% for section in ['resellers', 'registries', 'prices', 'deposits', 'jobs', 'ownership'] %}
+  {% for section in ['resellers', 'registries', 'domains', 'contacts', 'prices', 'deposits', 'jobs', 'ownership'] %}
     <a class="nav-link" href="/admin/{{ section }}">{{ section|capitalize }}</a>
   {% endfor %}
 </div></div></nav>

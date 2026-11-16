@@ -16,6 +16,7 @@ In this guide:
 - [Managing resellers](#managing-resellers)
 - [Install or upgrade](#install-or-upgrade)
 - [TLD administration and enforcement](#tld-administration-and-enforcement)
+- [Contacts and domains](#contacts-and-domains)
 
 ## Foundry reseller panel
 
@@ -299,3 +300,30 @@ CSRF/origin checks, role changes, session/token revocation, scoped prices and ob
 TLD revocation before EPP execution, and upgrading a v2 database. No live registry
 commands are sent. Upstream Foundry attribution is in `panel/UPSTREAM.md` and its MIT
 notice is preserved in `panel/LICENSE-FOUNDRY`.
+
+## Contacts and domains
+
+Both menus have **Contacts** and **Domains**. The reseller workspace lists only the signed-in account's records, even when an administrator uses it. Administration lists all owners. Existing ownership-import controls remain available separately.
+
+Contacts use a paginated table (50 contacts per page). **Add contact** beside the title opens the same scrollable Tabler modal used elsewhere. Administrators choose the owning reseller; resellers cannot change ownership. Select one or more registries, complete the native contact fields, and optionally fill five parameter-name/value pairs. Registry-specific fields are available in an expandable section. Additional parameters follow the existing API/profile serializer contract; adding a field does not add support for an upstream EPP extension.
+
+The local contact stores registry names and their actual contact IDs in a JSON mapping. Registry-generated IDs, including LT handles, are recorded from confirmed create responses. Contact details, additional values, authorization codes, registry error text and frozen requests are encrypted with the application master key. Existing API/CLI-owned contacts are discovered from verified ownership records when the list is opened; use **Sync** to populate their details. Contacts are not guessed to be the same person merely because handles or names match across registries.
+
+**Update** opens the same form prefilled. Saving submits native contact updates to selected existing links and creates the contact at selected new registries. Unselected links remain unchanged. Known registry IDs are taken from the stored mapping and cannot be retargeted by additional parameters. A stale form must be reloaded before saving over newer data.
+
+The **Sync contact** card at the bottom lists every linked registry, its contact ID and the latest result/EPP code. **Sync from registry** submits `contact.info` and refreshes the editable local fields from that response; other registries change only when you subsequently save. Each row also offers the API's dedicated authorization-code update rather than pretending a normal contact update changes the auth code.
+
+**Delete** on the list requests deletion at every linked registry. There is no local guess about domain associations: registry rejections such as EPP 2305 remain visible, and failed links are retained. Confirmed successful links are removed, and the local contact disappears only after its last link is removed. A definitively rejected create draft with no registry contact can be removed locally.
+
+Actions use the existing durable job ledger, native profile validation, registry grants and object ownership, then the normal dispatcher/workers execute EPP. Admin actions use the contact owner's access rather than granting that owner administrator permissions. Contact operations remain free. Registry errors and unsupported profile errors are displayed per link with job details where available. Queued/processing results refresh automatically, but polling never discards unsaved form edits. Unknown/pending writes must be reconciled before replacement; an interrupted prepared submission can be resumed with its original stored payload/key. FPM contact submissions have a persistent per-actor limit using `API_RATE_LIMIT_PER_MINUTE`.
+
+Apply migration **006_contacts** before enabling the updated panel (the standard upgrade script handles it):
+
+```bash
+composer install --no-dev --classmap-authoritative
+php8.5 bin/manage.php migrate
+```
+
+The migration adds one `panel_contacts` table without changing existing ownership or EPP job tables. Fresh installs include it in `database/schema.sql`. It does not contact any registries or invent contact data during migration.
+
+Run `php8.5 tests/contacts.php` with the same disposable-database `TEST_MYSQL_*` settings as the other suites. It covers authorization, encrypted data/JSON mappings, extra parameters, registry-generated IDs, updates, sync, partial deletion, outstanding-job recovery, discovery, pagination and migration. `node tests/contacts.js` checks polling and unsaved changes; `php8.5 tests/panel_router.php` verifies that the new asset is also served by the documented development router. Registry responses are simulated; no live EPP commands are sent by these tests.

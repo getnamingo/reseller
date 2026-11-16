@@ -267,7 +267,7 @@ revoked; unavailable current prices are hidden. None of these listings sends an 
 command, creates a charge or reveals registry credentials.
 
 The panel's **Jobs** page provides paginated history with status, command and registry
-filters. Its existing **Prices** and **Objects** pages already provide the other two
+filters. Its existing **Prices** and **Domains** pages already provide the other two
 browsing functions; availability jobs link to their existing result page. No domain
 provisioning controls are added.
 
@@ -337,7 +337,7 @@ The endpoint refuses unknown writes and cannot select another reseller's job.
 ### Delete and restore
 
 A successful deletion retains the domain's owner with `domain_state=deleted`. It remains
-visible in `GET /v1/domains` and the panel's Objects page. Its `active` flag describes
+visible in `GET /v1/domains` and the panel's Domains page. Its `active` flag describes
 confirmed ownership, not whether the domain resolves or is outside redemption. Ordinary
 updates/renewals/new creates are blocked on retained deleted names; owner info and restore
 operations remain available. Background info checks remove the retained mapping only after
