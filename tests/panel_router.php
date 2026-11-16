@@ -15,20 +15,22 @@ if (!is_resource($process)) { throw new RuntimeException('Could not start PHP de
 fclose($pipes[0]);
 try {
     $context = stream_context_create(['http' => ['timeout' => 1, 'ignore_errors' => true]]);
-    $body = false;
-    for ($attempt = 0; $attempt < 50; ++$attempt) {
-        $body = @file_get_contents('http://' . $address . '/checks.js?v=router-test', false, $context);
-        if ($body !== false) { break; }
-        usleep(100_000);
+    foreach (['/checks.js', '/prices.js'] as $asset) {
+        $body = false;
+        for ($attempt = 0; $attempt < 50; ++$attempt) {
+            $body = @file_get_contents('http://' . $address . $asset . '?v=router-test', false, $context);
+            if ($body !== false) { break; }
+            usleep(100_000);
+        }
+        if ($body !== file_get_contents($root . '/panel/public' . $asset)) {
+            throw new RuntimeException('Router did not serve ' . $asset . ': ' . file_get_contents($log));
+        }
+        $headers = implode("\n", http_get_last_response_headers() ?? []);
+        if (!str_contains($headers, '200 OK') || preg_match('/Content-Type: (?:application|text)\/javascript/i', $headers) !== 1) {
+            throw new RuntimeException('Expected HTTP 200 JavaScript, got: ' . $headers);
+        }
     }
-    if ($body !== file_get_contents($root . '/panel/public/checks.js')) {
-        throw new RuntimeException('Router did not serve checks.js: ' . file_get_contents($log));
-    }
-    $headers = implode("\n", http_get_last_response_headers() ?? []);
-    if (!str_contains($headers, '200 OK') || preg_match('/Content-Type: (?:application|text)\/javascript/i', $headers) !== 1) {
-        throw new RuntimeException('Expected HTTP 200 JavaScript, got: ' . $headers);
-    }
-    echo "PASS: development router serves polling JavaScript\n";
+    echo "PASS: development router serves polling and price JavaScript\n";
 } finally {
     proc_terminate($process);
     proc_close($process);

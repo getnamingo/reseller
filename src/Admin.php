@@ -158,14 +158,39 @@ final class Admin
                         $pdo->prepare('DELETE FROM reseller_tlds WHERE reseller_id = ? AND registry_id = ? AND tld = ?')
                             ->execute([$id('reseller_id'), $target, $metadata['tld']]);
                         break;
+                    case 'price.batch':
+                        $zone = explode(':', $get('zone'), 2);
+                        if (count($zone) !== 2 || !Util::isUuid($zone[0]) || $zone[1] === '') {
+                            throw new ApiException(422, 'invalid_price_scope', 'Choose one configured registry and TLD.');
+                        }
+                        $target = strtolower($zone[0]);
+                        $tld = Access::tld($zone[1]);
+                        $scope = $get('scope') === 'global' ? CommandCatalog::GLOBAL_PRICE_UUID : $id('scope');
+                        $amounts = $input['amounts'] ?? null;
+                        $operations = CommandCatalog::priceOperations();
+                        if (!is_array($amounts) || count($amounts) !== count($operations) || array_diff(array_keys($amounts), array_keys($operations))) {
+                            throw new ApiException(422, 'invalid_price_table', 'Supply prices for exactly the five supported domain operations.');
+                        }
+                        foreach ($operations as $command => $label) {
+                            $periods = $command === 'domain.restore' ? [0] : range($command === 'domain.transfer' ? 0 : 1, 10);
+                            $values = $amounts[$command] ?? null;
+                            if (!is_array($values) || count($values) !== count($periods) || array_diff(array_keys($values), $periods)) {
+                                throw new ApiException(422, 'required_price', "Fill every {$label} price; enter 0 explicitly for free operations.");
+                            }
+                            foreach ($periods as $period) {
+                                if (!is_string($values[$period] ?? null) || trim($values[$period]) === '') {
+                                    throw new ApiException(422, 'required_price', "Enter {$label} price for term {$period}; use 0 explicitly for free operations.");
+                                }
+                                self::savePrice($pdo, $target, $scope, $command, $tld, $period, trim($values[$period]), $get('currency'));
+                            }
+                        }
+                        $metadata = ['scope' => $scope, 'tld' => $tld, 'prices' => 42];
+                        break;
                     case 'price.set':
                     case 'price.delete':
                         $target = $id('registry_id');
                         $command = $get('command');
                         CommandCatalog::method($command);
-                        if ($action === 'price.set' && !CommandCatalog::requiresPrice($command)) {
-                            throw new ApiException(422, 'unsupported_price_command', 'Prices may only be set for domain.create, domain.create_dnssec, domain.renew, domain.restore and domain.transfer.');
-                        }
                         $scope = $get('scope', 'global');
                         $scope = $scope === 'global' ? CommandCatalog::GLOBAL_PRICE_UUID : $id('scope');
                         $tld = $get('tld') === '' ? '' : Access::tld($get('tld'));
@@ -177,25 +202,7 @@ final class Admin
                             $pdo->prepare('DELETE FROM registry_prices WHERE registry_id = ? AND reseller_id = ? AND command = ? AND tld = ? AND period = ?')
                                 ->execute([$target, $scope, $command, $tld, $period]);
                         } else {
-                            if ((in_array($command, ['domain.create', 'domain.create_dnssec', 'domain.renew'], true) && ($tld === '' || $period === '0'))
-                                || ($period !== '0' && ($tld === '' || !in_array($command, ['domain.create', 'domain.create_dnssec', 'domain.renew', 'domain.transfer'], true)))) {
-                                throw new ApiException(422, 'invalid_price_scope', 'Term prices need a TLD and 1–10 years; other commands use term 0.');
-                            }
-                            if ($tld !== '') {
-                                $exists = $pdo->prepare('SELECT 1 FROM registry_tlds WHERE registry_id = ? AND tld = ?');
-                                $exists->execute([$target, $tld]);
-                                if (!$exists->fetchColumn()) {
-                                    throw new ApiException(422, 'unknown_tld', 'Add this TLD to the registry first.');
-                                }
-                            }
-                            $raw = $get('amount');
-                            $amount = preg_match('/^0(?:\.0{1,4})?$/D', $raw) ? '0.0000' : Util::money($raw);
-                            $currency = strtoupper($get('currency'));
-                            if (preg_match('/^[A-Z]{3}$/D', $currency) !== 1) {
-                                throw new ApiException(422, 'invalid_currency', 'Use a three-letter currency.');
-                            }
-                            $pdo->prepare('INSERT INTO registry_prices (registry_id, reseller_id, command, tld, period, amount, currency) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE amount = VALUES(amount), currency = VALUES(currency)')
-                                ->execute([$target, $scope, $command, $tld, $period, $amount, $currency]);
+                            self::savePrice($pdo, $target, $scope, $command, $tld, (int) $period, $get('amount'), $get('currency'));
                         }
                         $metadata = ['command' => $command, 'scope' => $scope, 'tld' => $tld, 'period' => $period];
                         break;
@@ -226,6 +233,34 @@ final class Admin
         Audit::record($pdo, $actor, 'panel.admin.' . $action, null, $target, $ip,
             $metadata + array_intersect_key($input, array_flip(['reseller_id', 'enabled', 'role', 'status'])));
         return $target ?? 'Saved';
+    }
+
+    /** Shared price writer for authenticated administration and the local CLI. */
+    public static function savePrice(PDO $pdo, string $registry, string $scope, string $command, string $tld, int $period, string $raw, string $currency): void
+    {
+        CommandCatalog::method($command);
+        if (!CommandCatalog::requiresPrice($command)) {
+            throw new ApiException(422, 'unsupported_price_command', 'Prices may only be set for domain.create, domain.create_dnssec, domain.renew, domain.restore and domain.transfer.');
+        }
+        if (!Util::isUuid($registry) || ($scope !== CommandCatalog::GLOBAL_PRICE_UUID && !Util::isUuid($scope)) || $period < 0 || $period > 10
+            || (in_array($command, ['domain.create', 'domain.create_dnssec', 'domain.renew'], true) && ($tld === '' || $period === 0))
+            || ($period > 0 && ($tld === '' || $command === 'domain.restore'))) {
+            throw new ApiException(422, 'invalid_price_scope', 'Term prices need a TLD and 1–10 years; restore and transfer follow-ups use term 0.');
+        }
+        if ($tld !== '') {
+            $tld = Access::tld($tld);
+            $exists = $pdo->prepare('SELECT 1 FROM registry_tlds WHERE registry_id = ? AND tld = ?');
+            $exists->execute([$registry, $tld]);
+            if (!$exists->fetchColumn()) { throw new ApiException(422, 'unknown_tld', 'Add this TLD to the registry first.'); }
+        }
+        $raw = trim($raw);
+        $amount = preg_match('/^0(?:\.0{1,4})?$/D', $raw) ? '0.0000' : Util::money($raw);
+        $currency = strtoupper(trim($currency));
+        if (preg_match('/^[A-Z]{3}$/D', $currency) !== 1) {
+            throw new ApiException(422, 'invalid_currency', 'Use a three-letter currency.');
+        }
+        $pdo->prepare('INSERT INTO registry_prices (registry_id, reseller_id, command, tld, period, amount, currency) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE amount = VALUES(amount), currency = VALUES(currency)')
+            ->execute([$registry, $scope, $command, $tld, $period, $amount, $currency]);
     }
 
     /** Shared panel/CLI account edit. UUID, credentials and wallet currency stay independent. */

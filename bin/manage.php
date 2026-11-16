@@ -372,10 +372,6 @@ try {
         case 'price:set':
             $registryId = $uuid($arg(2, 'REGISTRY_UUID'), 'REGISTRY_UUID');
             $eppCommand = $arg(3, 'COMMAND');
-            CommandCatalog::method($eppCommand);
-            if (!CommandCatalog::requiresPrice($eppCommand)) {
-                throw new RuntimeException('Prices may only be set for domain.create, domain.create_dnssec, domain.renew, domain.restore and domain.transfer.');
-            }
             $rawAmount = $arg(4, 'AMOUNT');
             $amount = preg_match('/^0(?:\.0{1,4})?$/D', $rawAmount) === 1 ? '0.0000' : Util::money($rawAmount);
             $currency = strtoupper($arg(5, 'CURRENCY'));
@@ -385,11 +381,7 @@ try {
             $scope = $argv[6] ?? 'global';
             $resellerId = $scope === 'global' ? CommandCatalog::GLOBAL_PRICE_UUID : $uuid($scope, 'RESELLER_UUID');
             [$tld, $period] = $priceScope($argv[7] ?? '-', $argv[8] ?? '0');
-            $stmt = $pdo->prepare(
-                'INSERT INTO registry_prices (registry_id, reseller_id, command, amount, currency, tld, period) VALUES (?, ?, ?, ?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE amount = VALUES(amount), currency = VALUES(currency)'
-            );
-            $stmt->execute([$registryId, $resellerId, $eppCommand, $amount, $currency, $tld, $period]);
+            Admin::savePrice($pdo, $registryId, $resellerId, $eppCommand, $tld, $period, $amount, $currency);
             Audit::record($pdo, $scope === 'global' ? null : $resellerId, 'admin.price_set', 'registry', $registryId, null, [
                 'command' => $eppCommand, 'tld' => $tld, 'period' => $period, 'amount' => $amount, 'currency' => $currency, 'scope' => $scope,
             ]);

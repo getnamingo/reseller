@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 if (PHP_SAPI === 'cli-server') {
     $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-    if (in_array($path, ['/panel.css', '/checks.js', '/assets/css/tabler.min.css', '/assets/js/tabler.min.js'], true)
+    if (in_array($path, ['/panel.css', '/checks.js', '/prices.js', '/assets/css/tabler.min.css', '/assets/js/tabler.min.js'], true)
         && is_file(__DIR__ . $path)) {
         return false;
     }
