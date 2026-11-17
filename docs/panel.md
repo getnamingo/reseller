@@ -62,8 +62,7 @@ not trusted from the session. The administration pages cover reseller creation,
 password resets, suspension, roles, token revocation, encrypted registry configuration,
 registry and TLD access, prices, deposit decisions, unknown-job reconciliation and
 verified ownership imports. Financial and registry reconciliation require the operator
-to independently verify the outcome, as with the CLI. Registry credentials cannot be
-viewed back in the panel. Use one registry UUID per upstream account as before.
+to independently verify the outcome, as with the CLI. Registry credentials remain encrypted at rest and are loaded only into the administrator-only registry edit form. Use one registry UUID per upstream account as before.
 The admin job table links to each reseller's job details, including registry response,
 EPP code, timestamps and latest error. Pending/unknown jobs offer the existing verified
 resolution controls with the selected job reference filled in. Resellers cannot access
@@ -175,10 +174,13 @@ pagination and modal state reset.
 open Tabler modals to **Add a registry** (no existing-UUID field) or **Add TLD**. Each
 registry row links to **Edit registry**, **TLDs** and **TLD permissions**.
 
-The registry edit page preloads its name/profile, accepts a full replacement configuration
-JSON without revealing encrypted credentials, and includes a state toggle plus a separate
+The add and edit registry forms use EPP host/port, username/password and a Debug radio instead of a raw JSON textarea. The edit page loads stored values into the fields, including the password and complete SSL PEM text for administrators, and includes a state toggle plus a separate
 reseller access card accepting any reseller UUID. Its paginated permission table contains
 only that registry's records, with permit/revoke toggles.
+
+SSL has separate CA certificate, client certificate and private-key textareas plus a key-passphrase field. Paste complete PEM contents; blank PEM fields are saved as JSON `null`, and multiline PEMs are serialized with escaped `\n`. Passwords/passphrases retain their exact spaces. Debug defaults off (`verify_peer=true`, `verify_peer_name=true`, `allow_self_signed=false`); on uses the inverse settings.
+
+Advanced fields default to prefix `api`, timeout 30 seconds, TLS 1.3 (TLS 1.2 is also selectable), and the object/extension URI lists in `deploy/registry.example.json`. URI lists accept commas or new lines. Blank bind disables binding; an IPv4 address is stored as `IP:0` and IPv6 as `[IP]:0`, replacing a supplied source port with 0. Editing preserves existing settings not represented in the form, and absent URI overrides remain absent so profile defaults still apply. JSON is assembled and validated on the server before the existing encrypted save operation; no schema or API/CLI configuration format changes are required. Registry edit responses are marked private/non-cacheable.
 
 The TLD page lists that registry's suffixes with colored enable/disable buttons, an Add
 TLD modal and the existing guarded unused-TLD removal controls. The TLD permissions page

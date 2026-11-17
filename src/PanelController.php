@@ -117,6 +117,9 @@ final class PanelController
                         };
                         $action = $input['action'] ?? '';
                         if (!in_array($action, $allowed, true)) { throw new ApiException(422, 'invalid_action', 'Choose an action offered on this registry page.'); }
+                        if ($action === 'registry.save' && ($input['registry_fields'] ?? '') === '1') {
+                            $input['config_json'] = Util::json(RegistryForm::config(DomainParams::text($input,'profile'),$input,$this->registryConfig($registry['id'])));
+                        }
                         Admin::perform($this->pdo, $this->user['id'], $action, array_replace($input, ['registry_id' => $registry['id']]), $ip);
                         $_SESSION['flash'] = 'Registry settings saved.';
                         $page = $this->page($request);
@@ -156,6 +159,9 @@ final class PanelController
                     }
                     if ($section === 'registries' && $action === 'registry.save' && ($input['registry_id'] ?? '') !== '') {
                         throw new ApiException(422, 'invalid_action', 'Open the registry edit page to update an existing registry.');
+                    }
+                    if ($section === 'registries' && $action === 'registry.save' && ($input['registry_fields'] ?? '') === '1') {
+                        $input['config_json'] = Util::json(RegistryForm::config(DomainParams::text($input,'profile'),$input));
                     }
                     $id = Admin::perform($this->pdo, $this->user['id'], $action, $input, $ip);
                     $_SESSION['flash'] = 'Saved. Reference: ' . $id;
@@ -542,6 +548,12 @@ final class PanelController
         return $this->render($response, 'table.twig', $this->pagination($data));
     }
 
+    private function registryConfig(string $id): array
+    {
+        $row = PanelData::rows($this->pdo,'SELECT config_nonce, config_cipher FROM registries WHERE id = ?',[$id])[0];
+        return json_decode(Crypto::decrypt($row['config_nonce'],$row['config_cipher'],'registry-config:'.$id),true,64,JSON_THROW_ON_ERROR);
+    }
+
     private function registryPage(ResponseInterface $response, array $registry, string $view, int $page, string $path): ResponseInterface
     {
         $offset = ($page - 1) * 50;
@@ -557,6 +569,10 @@ final class PanelController
             'profiles' => CommandCatalog::profiles(),
             'resellers' => PanelData::rows($this->pdo, 'SELECT id, username FROM resellers ORDER BY username LIMIT 500'),
             'tlds' => PanelData::rows($this->pdo, 'SELECT tld FROM registry_tlds WHERE registry_id = ? ORDER BY tld', [$id])];
+        if ($view === 'edit') {
+            $data['registry_form'] = RegistryForm::fields($this->registryConfig($id));
+            $response = $response->withHeader('Cache-Control','private, no-store');
+        }
         return $this->render($response, 'registry.twig', $this->pagination($data));
     }
 
@@ -580,6 +596,7 @@ final class PanelController
             'resellers' => PanelData::rows($this->pdo, 'SELECT id, username FROM resellers ORDER BY username LIMIT 500'),
             'registries' => PanelData::rows($this->pdo, 'SELECT id, name FROM registries ORDER BY name LIMIT 500'),
             'profiles' => CommandCatalog::profiles(), 'commands' => array_column(CommandCatalog::all(), 'command')];
+        if ($section === 'registries') { $data['registry_form'] = RegistryForm::fields(); }
         if ($section === 'prices') {
             $data['price_operations'] = CommandCatalog::priceOperations();
             $data['price_zones'] = PanelData::rows($this->pdo, 'SELECT t.registry_id, t.tld, r.name AS registry FROM registry_tlds t JOIN registries r ON r.id = t.registry_id ORDER BY r.name, t.tld');

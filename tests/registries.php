@@ -49,7 +49,7 @@ try {
     check(request($base, 'POST', ['action' => 'registry.save', 'registry_id' => $two, 'name' => 'Updated registry', 'profile' => 'generic', 'config_json' => $config])->getStatusCode() === 303, 'Registry edit saves');
     check(value('SELECT name FROM registries WHERE id=?', [$one]) === 'Updated registry' && value('SELECT name FROM registries WHERE id=?', [$two]) === 'Second registry', 'Registry edit cannot target forged registry ID');
     $edit = html($base);
-    check(str_contains($edit, 'name="name" type="text" value="Updated registry"') && !str_contains($edit, 'hidden-upstream-password'), 'Registry fields prefill without disclosing credentials');
+    check(str_contains($edit, 'name="name" type="text" value="Updated registry"') && str_contains($edit, 'name="epp_password" type="password" value="hidden-upstream-password"'), 'Administrator edit fields prefill saved settings');
     check(request($base, 'POST', ['action' => 'registry.status', 'enabled' => '0', 'registry_id' => $two])->getStatusCode() === 303, 'Registry state toggle posts');
     check(value('SELECT enabled FROM registries WHERE id=?', [$one]) === '0' && value('SELECT enabled FROM registries WHERE id=?', [$two]) === '1' && str_contains(html($base), 'Disabled — enable'), 'State toggle is scoped and reflects new color/state');
     request($base, 'POST', ['action' => 'registry.status', 'enabled' => '1']);
@@ -116,6 +116,26 @@ try {
         check(get_class($client)==='Pinga\\Tembo\\Registries\\'.$class, $profile . ' resolves to its registry-specific EPP client');
     }
     check(Composer\InstalledVersions::getPrettyVersion('pinga/tembo')==='v1.1.24', 'Installed EPP client is pinned to 1.1.24');
+    $fields=array_map('strval',Namingo\ResellerApi\RegistryForm::fields());
+    $fields=array_replace($fields,['registry_fields'=>'1','action'=>'registry.save','name'=>'Field-based registry','profile'=>'generic',
+        'epp_host'=>'fields.registry.invalid','epp_username'=>'field-user','epp_password'=>' field-password ','bind_ip'=>'2001:db8::10']);
+    check(request('/admin/registries','POST',$fields)->getStatusCode()===303,'Structured form creates registry');
+    $fieldId=value("SELECT id FROM registries WHERE name='Field-based registry'");
+    $raw=Namingo\ResellerApi\PanelData::rows($pdo,'SELECT * FROM registries WHERE id=?',[$fieldId])[0];
+    $saved=json_decode(Crypto::decrypt($raw['config_nonce'],$raw['config_cipher'],'registry-config:'.$fieldId),true);
+    check($saved['login']['clID']==='field-user' && $saved['login']['pw']===' field-password ' && $saved['connection']['bindip']==='[2001:db8::10]:0','Structured fields saved in unchanged encrypted JSON format');
+    check(!str_contains($raw['config_cipher'],'field-password'),'Structured credentials encrypted');
+    $response=request('/admin/registries/'.$fieldId);$edit=(string)$response->getBody();
+    check(str_contains($edit,'value="fields.registry.invalid"') && str_contains($edit,'value="field-user"') && str_contains($edit,'value="2001:db8::10"'),'Saved structured values reload for edit');
+    check(str_contains($response->getHeaderLine('Cache-Control'),'no-store'),'Credential edit response is not cached');
+    check(!str_contains($edit,'name="config_json"') && !str_contains(html('/admin/registries'),'name="config_json"'),'Both forms omit raw JSON textarea');
+    $fields['epp_host']='updated.registry.invalid';$fields['registry_debug']='1';$fields['registry_id']=$two;
+    check(request('/admin/registries/'.$fieldId,'POST',$fields)->getStatusCode()===303,'Structured edit saves against URL registry');
+    $raw=Namingo\ResellerApi\PanelData::rows($pdo,'SELECT * FROM registries WHERE id=?',[$fieldId])[0];
+    $saved=json_decode(Crypto::decrypt($raw['config_nonce'],$raw['config_cipher'],'registry-config:'.$fieldId),true);
+    check($saved['connection']['host']==='updated.registry.invalid' && !$saved['connection']['verify_peer'] && $saved['connection']['allow_self_signed'],'Structured edit updates only selected registry configuration');
+    check(request('/admin/registries','POST',$fields,false)->getStatusCode()===403,'Structured save requires CSRF');
+    check(request('/admin/registries/'.$fieldId,'POST',array_replace($fields,['bind_ip'=>'bad-bind']))->getStatusCode()===422,'Invalid structured settings report validation error');
     PanelSession::login(Auth::login($pdo, 'reseller-a', $password, '127.0.0.1'));
     foreach ([$base, $base . '/tlds', $base . '/permissions'] as $path) {
         check(request($path)->getStatusCode() === 403, 'Non-admin cannot open registry subpage');

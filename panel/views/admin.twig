@@ -32,10 +32,10 @@
 </form></div></div>
 {% endif %}
 {% if section == 'registries' %}
-<div class="modal modal-blur fade" id="add-registry" tabindex="-1" aria-labelledby="add-registry-title" aria-hidden="true"><div class="modal-dialog modal-dialog-centered modal-lg"><form method="post" class="modal-content">{{ forms.hidden('registry.save', csrf) }}
+<div class="modal modal-blur fade" id="add-registry" tabindex="-1" aria-labelledby="add-registry-title" aria-hidden="true"><div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable"><form method="post" class="modal-content">{{ forms.hidden('registry.save', csrf) }}
 <div class="modal-header"><h2 class="modal-title" id="add-registry-title">Add a registry</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
 <div class="modal-body">{{ forms.input('name', 'Display name') }}<label class="form-label mb-3">EPP profile<select class="form-select" name="profile">{% for profile in profiles %}<option>{{ profile }}</option>{% endfor %}</select></label>
-<label class="form-label mb-3">Full registry configuration JSON<textarea class="form-control" name="config_json" rows="8" required autocomplete="off" spellcheck="false"></textarea></label><p class="text-secondary">Use deploy/registry.example.json. Credentials are encrypted and never displayed.</p></div>
+{% include 'partials/registry_fields.twig' %}<p class="text-secondary">Registry configuration is stored encrypted.</p></div>
 <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary">Create registry</button></div></form></div></div>
 {% include 'partials/add_tld_modal.twig' %}
 {% endif %}

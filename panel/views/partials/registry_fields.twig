@@ -1,0 +1,21 @@
+<input type="hidden" name="registry_fields" value="1">
+<div class="row g-3 mb-3">
+<div class="col-md-9"><label class="form-label">EPP host<input class="form-control" name="epp_host" value="{{ registry_form.epp_host }}" maxlength="255" required autocomplete="off" placeholder="epp.registry.example"></label><div class="form-hint">Use the full HTTPS endpoint URL for profiles that require it.</div></div>
+<div class="col-md-3"><label class="form-label">EPP port<input class="form-control" name="epp_port" type="number" min="1" max="65535" value="{{ registry_form.epp_port }}" required></label></div>
+<div class="col-md-6"><label class="form-label">EPP username<input class="form-control" name="epp_username" value="{{ registry_form.epp_username }}" maxlength="128" required autocomplete="off"></label></div>
+<div class="col-md-6"><label class="form-label">EPP password<input class="form-control" name="epp_password" type="password" value="{{ registry_form.epp_password }}" maxlength="1024" required autocomplete="new-password"></label></div>
+</div>
+<fieldset class="mb-3"><legend class="form-label">Debug</legend><div class="d-flex gap-4"><label class="form-check"><input class="form-check-input" type="radio" name="registry_debug" value="0"{% if registry_form.registry_debug == '0' %} checked{% endif %}><span class="form-check-label">Off</span></label><label class="form-check"><input class="form-check-input" type="radio" name="registry_debug" value="1"{% if registry_form.registry_debug == '1' %} checked{% endif %}><span class="form-check-label">On</span></label></div><div class="form-hint">Off verifies the peer and hostname and rejects self-signed certificates. On disables those checks and allows self-signed certificates.</div></fieldset>
+<h3 class="mt-4">SSL certificates</h3><div class="row g-3">
+{% for field,label in {'ca_pem':'CA certificate (optional)','client_cert_pem':'Client certificate (optional)','client_key_pem':'Client private key (optional)'} %}<div class="col-md-4"><label class="form-label">{{ label }}<textarea class="form-control font-monospace" name="{{ field }}" rows="5" autocomplete="off" spellcheck="false">{{ attribute(registry_form,field) }}</textarea></label></div>{% endfor %}
+</div><label class="form-label mt-3">Client key passphrase<input class="form-control" type="password" name="client_key_passphrase" value="{{ registry_form.client_key_passphrase }}" maxlength="1024" autocomplete="new-password"></label>
+<div class="form-hint">Paste the complete PEM text, including BEGIN/END lines. Supply client certificate and private key together. Empty certificate fields are stored as null.</div>
+<details class="mt-4 mb-3"><summary class="fw-semibold text-blue">Advanced</summary><div class="row g-3 mt-1">
+<div class="col-md-4"><label class="form-label">Prefix<input class="form-control" name="epp_prefix" value="{{ registry_form.epp_prefix }}" maxlength="32" required></label></div>
+<div class="col-md-4"><label class="form-label">Timeout (seconds)<input class="form-control" name="epp_timeout" type="number" min="3" max="120" value="{{ registry_form.epp_timeout }}" required></label></div>
+<div class="col-md-4"><label class="form-label">TLS<select class="form-select" name="epp_tls">{% for version in ['1.3','1.2'] %}<option value="{{ version }}"{% if registry_form.epp_tls == version %} selected{% endif %}>{{ version }}</option>{% endfor %}</select></label></div>
+<div class="col-md-6"><label class="form-label">Login objects<textarea class="form-control font-monospace" name="login_objects" rows="4" spellcheck="false">{{ registry_form.login_objects }}</textarea></label></div>
+<div class="col-md-6"><label class="form-label">Login extensions<textarea class="form-control font-monospace" name="login_extensions" rows="4" spellcheck="false">{{ registry_form.login_extensions }}</textarea></label></div>
+<div class="col-12"><div class="form-hint">Separate object and extension URIs with commas or new lines.</div></div>
+<div class="col-12"><label class="form-label">Bind IP (optional)<input class="form-control" name="bind_ip" value="{{ registry_form.bind_ip }}" maxlength="128" placeholder="192.0.2.10 or 2001:db8::10"></label><div class="form-hint">Leave empty to disable binding. Addresses are stored with source port 0; IPv6 uses [address]:0.</div></div>
+</div></details>
