@@ -43,6 +43,13 @@ try {
     $one = value("SELECT id FROM registries WHERE name='First registry'");
     $two = action('registry.save', ['name' => 'Second registry', 'profile' => 'generic', 'config_json' => $config]);
     $base = '/admin/registries/' . $one; $other = '/admin/registries/' . $two;
+    action('tld.save',['registry_id'=>$one,'tld'=>'com','enabled'=>'1']);
+    $missingAccess=request($base.'/permissions','POST',['action'=>'tld.access','reseller_id'=>$a,'tld'=>'com','enabled'=>'1']);
+    check($missingAccess->getStatusCode()===422 && str_contains((string)$missingAccess->getBody(),'Grant registry access'),'Missing parent access gives actionable validation instead of generic database conflict');
+    check(value('SELECT COUNT(*) FROM reseller_registries WHERE reseller_id=? AND registry_id=?',[$a,$one])==='0','TLD permit never silently creates registry access');
+    check(str_contains(html($base.'/permissions'),'Grant registry access to a reseller before permitting a TLD'),'Empty permission dialog explains registry-access prerequisite');
+
+
     $list = html('/admin/registries');
     check(str_contains($list, $base . '/tlds') && str_contains($list, $base . '/permissions') && str_contains($list, '>Edit registry<'), 'Registry rows link to edit, TLDs and TLD permissions');
     check(request('/admin/registries', 'POST', ['action' => 'registry.save', 'registry_id' => $one, 'name' => 'Wrong', 'profile' => 'generic', 'config_json' => $config])->getStatusCode() === 422, 'Add-only endpoint rejects update UUID');
@@ -55,9 +62,18 @@ try {
     request($base, 'POST', ['action' => 'registry.status', 'enabled' => '1']);
     request($base, 'POST', ['action' => 'registry.access', 'reseller_id' => $a, 'enabled' => '1']);
     request($other, 'POST', ['action' => 'registry.access', 'reseller_id' => $b, 'enabled' => '1']);
+    $permissionHtml=html($base.'/permissions');
+    preg_match('/id="permit-tld"(.*?)<\/form>/s',$permissionHtml,$permitModal);
+    check(str_contains($permitModal[1],$a) && !str_contains($permitModal[1],$b),'Permit selector lists only this registry assigned accounts');
+    $missingTld=request($base.'/permissions','POST',['action'=>'tld.access','reseller_id'=>$a,'tld'=>'missing','enabled'=>'1']);
+    check($missingTld->getStatusCode()===422 && str_contains((string)$missingTld->getBody(),'Add this TLD'),'Stale or foreign TLD gives clear validation');
+
     check(str_contains(table(html($base)), 'reseller-a') && !str_contains(table(html($base)), 'reseller-b'), 'Registry permission table is scoped');
     request($base, 'POST', ['action' => 'registry.access', 'reseller_id' => $a, 'enabled' => '0']);
     check(value('SELECT enabled FROM reseller_registries WHERE registry_id=? AND reseller_id=?', [$one, $a]) === '0', 'Registry access revokes');
+    check(request($base.'/permissions','POST',['action'=>'tld.access','reseller_id'=>$a,'tld'=>'com','enabled'=>'1'])->getStatusCode()===303,'Assignments can be staged under existing disabled access');
+    check(value('SELECT enabled FROM reseller_registries WHERE registry_id=? AND reseller_id=?',[$one,$a])==='0','TLD permit never re-enables revoked registry access');
+
     request($base, 'POST', ['action' => 'registry.access', 'reseller_id' => $a, 'enabled' => '1']);
     check(request('/admin/registries', 'POST', ['action' => 'tld.save', 'registry_id' => $one, 'tld' => 'com', 'enabled' => '1'])->getStatusCode() === 303, 'Main add TLD modal works');
     request($other . '/tlds', 'POST', ['action' => 'tld.save', 'tld' => 'org', 'enabled' => '1']);

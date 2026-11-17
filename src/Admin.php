@@ -149,8 +149,20 @@ final class Admin
                     case 'tld.access':
                         $target = $id('registry_id');
                         $metadata['tld'] = Access::tld($get('tld'));
+                        $reseller = $id('reseller_id'); $enabled = $flag();
+                        // Lock both parent records so stale forms cannot fail as generic FK conflicts.
+                        $access = $pdo->prepare('SELECT enabled FROM reseller_registries WHERE reseller_id = ? AND registry_id = ? FOR UPDATE');
+                        $access->execute([$reseller, $target]);
+                        if ($access->fetchColumn() === false) {
+                            throw new ApiException(422, 'registry_access_required', 'Grant registry access to this reseller first: open Edit registry, save its Reseller access, then return to Permit a TLD.');
+                        }
+                        $zone = $pdo->prepare('SELECT tld FROM registry_tlds WHERE registry_id = ? AND tld = ? FOR UPDATE');
+                        $zone->execute([$target, $metadata['tld']]);
+                        if ($zone->fetchColumn() === false) {
+                            throw new ApiException(422, 'registry_tld_required', 'Add this TLD to the selected registry before assigning it to a reseller.');
+                        }
                         $pdo->prepare('INSERT INTO reseller_tlds (reseller_id, registry_id, tld, enabled) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)')
-                            ->execute([$id('reseller_id'), $target, $metadata['tld'], $flag()]);
+                            ->execute([$reseller, $target, $metadata['tld'], $enabled]);
                         break;
                     case 'tld.unassign':
                         $target = $id('registry_id');
