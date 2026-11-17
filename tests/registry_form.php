@@ -37,6 +37,16 @@ check($roundtrip===$existing,'Edit round trip preserves existing configuration a
 $omitted=$existing;unset($omitted['loginObjects'],$omitted['loginExtensions']);
 $unchanged=RegistryForm::config('generic',array_map('strval',RegistryForm::fields($omitted)),$omitted);
 check(!array_key_exists('loginObjects',$unchanged) && !array_key_exists('loginExtensions',$unchanged),'Absent client profile overrides remain absent');
+$nullOverrides=array_replace($existing,['loginObjects'=>null,'loginExtensions'=>null]);
+$nullRoundTrip=RegistryForm::config('generic',array_map('strval',RegistryForm::fields($nullOverrides)),$nullOverrides);
+check($nullRoundTrip===$nullOverrides,'Null login URI overrides remain null on unchanged form save');
+check(!isset($nullRoundTrip['loginObjects']) && !isset($nullRoundTrip['loginExtensions']),'Null URI overrides still leave worker profile defaults intact');
+$replacedNull=RegistryForm::config('generic',array_replace($fields,['login_objects'=>'urn:new-object','login_extensions'=>'urn:new-extension']),$nullOverrides);
+check($replacedNull['loginObjects']===['urn:new-object'] && $replacedNull['loginExtensions']===['urn:new-extension'],'Entered URIs replace null overrides');
+$emptyOverrides=array_replace($existing,['loginObjects'=>[],'loginExtensions'=>[]]);
+$emptyRoundTrip=RegistryForm::config('generic',array_map('strval',RegistryForm::fields($emptyOverrides)),$emptyOverrides);
+check($emptyRoundTrip['loginObjects']===[] && $emptyRoundTrip['loginExtensions']===[],'Explicit empty URI overrides remain empty arrays');
+
 invalid(array_replace($fields,['bind_ip'=>'invalid.example:0']),'Invalid bind rejected');
 invalid(array_replace($fields,['epp_port'=>'65536']),'Invalid port rejected');
 invalid(array_replace($fields,['registry_debug'=>'yes']),'Invalid debug option rejected');

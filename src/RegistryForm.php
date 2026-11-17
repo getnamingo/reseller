@@ -64,8 +64,8 @@ final class RegistryForm
         $config = array_replace($existing,['connection'=>$connection,'login'=>$login]);
         foreach (['loginObjects'=>'login_objects','loginExtensions'=>'login_extensions'] as $key=>$field) {
             $value = self::text($input,$field);
-            // Missing overrides on an existing registry keep the client's profile defaults.
-            if ($existing !== [] && !array_key_exists($key,$existing) && $value === '') { unset($config[$key]); continue; }
+            // Missing/null overrides on an existing registry keep the client's profile defaults.
+            if ($existing !== [] && !isset($existing[$key]) && $value === '') { continue; }
             $config[$key] = array_values(array_filter(array_map('trim',preg_split('/[,\r\n]+/',$value)),static fn($v)=>$v!==''));
         }
         try { return EppWorker::validateRegistryConfig($profile,$config); }
