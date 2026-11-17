@@ -3,6 +3,7 @@
 {% block content %}
 <div class="card card-body mb-4">
   {% if admin_job %}<p><a href="/admin/jobs">Back to all jobs</a></p><p>Reseller: {{ owner.username }} <span class="uuid">{{ owner.id }}</span></p>{% endif %}
+  {% if job.automatic_transfer_check %}<div class="alert alert-info">Automatic transfer status check. This is a free, read-only background query, not a transfer request. A rejection may mean no transfer exists or the query failed; inspect the response below for the reason.</div>{% endif %}
   <dl class="row"><dt class="col-sm-3">Job UUID</dt><dd class="col-sm-9 uuid">{{ job.job_uuid }}</dd>
   <dt class="col-sm-3">Registry</dt><dd class="col-sm-9">{{ job.registry_name }} <span class="uuid">{{ job.registry_uuid }}</span></dd>
   <dt class="col-sm-3">Operation</dt><dd class="col-sm-9">{{ job.command }} {{ job.transfer_op }}</dd>

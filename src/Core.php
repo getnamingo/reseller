@@ -1016,6 +1016,7 @@ final class Ledger
         $params = Ownership::params($job);
         return [
             'job_uuid' => $job['id'],
+            'automatic_transfer_check' => $job['command'] === 'domain.transfer' && ($params['op'] ?? '') === 'query' && str_starts_with($job['idempotency_key'], 'transfer-discovery-'),
             'domainname' => $params['domainname'] ?? null,
             'transfer_op' => $job['command'] === 'domain.transfer' ? ($params['op'] ?? null) : null,
             'parent_job_uuid' => $job['parent_job_id'],

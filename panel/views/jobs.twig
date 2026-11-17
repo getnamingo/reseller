@@ -1,16 +1,18 @@
 {% extends 'layouts/app.twig' %}
 {% block content %}
+<p class="text-secondary">Automatic transfer checks are read-only background queries, not transfer requests. Use Source to include them; their recorded errors remain available for troubleshooting.</p>
 <div class="card card-body mb-4"><form method="get" action="/jobs" class="row g-3 align-items-end">
-  <div class="col-md-3"><label class="form-label">Status<select class="form-select" name="status"><option value="">All statuses</option>{% for status in statuses %}<option value="{{ status }}"{% if filters.status == status %} selected{% endif %}>{{ status|capitalize }}</option>{% endfor %}</select></label></div>
-  <div class="col-md-3"><label class="form-label">Command<select class="form-select" name="command"><option value="">All commands</option>{% for command in commands %}<option value="{{ command }}"{% if filters.command == command %} selected{% endif %}>{{ command }}</option>{% endfor %}</select></label></div>
-  <div class="col-md-4"><label class="form-label">Registry UUID (optional)<input class="form-control" name="registry_uuid" value="{{ filters.registry_uuid }}"></label></div>
-  <div class="col-md-2 mb-3"><button class="btn btn-primary">Filter</button> <a href="/jobs" class="btn btn-outline-secondary">Reset</a></div>
+  <div class="col-md-6 col-xl-2"><label class="form-label">Status<select class="form-select" name="status"><option value="">All statuses</option>{% for status in statuses %}<option value="{{ status }}"{% if filters.status == status %} selected{% endif %}>{{ status|capitalize }}</option>{% endfor %}</select></label></div>
+  <div class="col-md-6 col-xl-3"><label class="form-label">Command<select class="form-select" name="command"><option value="">All commands</option>{% for command in commands %}<option value="{{ command }}"{% if filters.command == command %} selected{% endif %}>{{ command }}</option>{% endfor %}</select></label></div>
+  <div class="col-md-6 col-xl-3"><label class="form-label">Registry UUID (optional)<input class="form-control" name="registry_uuid" value="{{ filters.registry_uuid }}"></label></div>
+  <div class="col-md-6 col-xl-2"><label class="form-label">Source<select class="form-select" name="source">{% for value, label in {'requested':'Your requests', 'automatic':'Automatic transfer checks', 'all':'All jobs'} %}<option value="{{ value }}"{% if filters.source == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label></div>
+  <div class="col-md-12 col-xl-2 mb-3"><button class="btn btn-primary">Filter</button> <a href="/jobs" class="btn btn-outline-secondary">Reset</a></div>
 </form></div>
 <div class="card"><div class="table-responsive"><table class="table table-vcenter card-table">
 <thead><tr><th>Job UUID</th><th>Registry</th><th>Command</th><th>Status</th><th>Price</th><th>Created</th><th>Finished</th><th>EPP code</th></tr></thead>
 <tbody>{% for job in rows %}<tr>
 <td class="uuid"><a href="/jobs/{{ job.job_uuid }}">{{ job.job_uuid }}</a></td>
-<td>{{ job.registry_name }}</td><td>{{ job.command }}</td><td>{{ job.status }}</td><td>{{ job.price }} {{ job.currency }}</td><td>{{ job.created_at }}</td><td>{{ job.finished_at ?? '—' }}</td><td>{{ job.epp_code ?? '—' }}</td>
+<td>{{ job.registry_name }}</td><td>{{ job.command }}{% if job.source == 'automatic' %}<div class="small text-secondary">Automatic transfer status query</div>{% endif %}</td><td>{{ job.status }}</td><td>{{ job.price }} {{ job.currency }}</td><td>{{ job.created_at }}</td><td>{{ job.finished_at ?? '—' }}</td><td>{{ job.epp_code ?? '—' }}</td>
 </tr>{% else %}<tr><td colspan="8" class="text-center text-secondary py-4">No jobs match these filters.</td></tr>{% endfor %}</tbody>
 </table></div></div>
 {% include 'partials/pagination.twig' %}

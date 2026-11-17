@@ -194,6 +194,9 @@ final class Transfers
         return ['rows' => $rows, 'next' => $next];
     }
 
+    /** Internal discovery keys distinguish scheduled queries from customer requests. */
+    public const DISCOVERY_SQL = "(j.command = 'domain.transfer' AND j.idempotency_key LIKE 'transfer-discovery-%')";
+
     /** Periodic read-only discovery; does not send or replay any transfer request. */
     public static function discover(PDO $pdo): void
     {

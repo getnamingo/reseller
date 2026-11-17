@@ -19,9 +19,16 @@ final class SelfService
         $filters = $registry === '' ? [] : ['registry_uuid' => strtolower($registry)];
         $params = [$reseller];
         if ($resource === 'jobs') {
-            $sql = 'SELECT j.id AS job_uuid, j.registry_id AS registry_uuid, r.name AS registry_name,
+            $discovery = Transfers::DISCOVERY_SQL;
+            $source = self::text($query, 'source');
+            if (!in_array($source, ['', 'all', 'requested', 'automatic'], true)) {
+                throw new ApiException(422, 'invalid_filter', 'Invalid job source filter.');
+            }
+            $sql = "SELECT CASE WHEN {$discovery} THEN 'automatic' ELSE 'requested' END AS source, j.id AS job_uuid, j.registry_id AS registry_uuid, r.name AS registry_name,
                 j.command, j.status, j.parent_job_id AS parent_job_uuid, j.reconcile_at, j.last_error, j.price, j.currency, j.epp_code, j.created_at, j.started_at, j.finished_at
-                FROM epp_jobs j JOIN registries r ON r.id = j.registry_id WHERE j.reseller_id = ?';
+                FROM epp_jobs j JOIN registries r ON r.id = j.registry_id WHERE j.reseller_id = ?";
+            if ($source === 'requested') { $sql .= " AND NOT {$discovery}"; }
+            elseif ($source === 'automatic') { $sql .= " AND {$discovery}"; }
             foreach (['status' => ['queued', 'processing', 'succeeded', 'rejected', 'unknown', 'pending'],
                 'command' => array_column(CommandCatalog::all(), 'command')] as $key => $allowed) {
                 $value = self::text($query, $key);
