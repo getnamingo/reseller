@@ -79,6 +79,17 @@ try {
     check(value("SELECT COUNT(*) FROM object_ownership WHERE object_type='domain' AND active=1 AND reseller_id=?",[$a])==='2','Both valid domains become owned');
     $userList=(string)request('/domains?batch='.$create['key'])->getBody();
     check(!str_contains($userList,'Operation results') && !str_contains($userList,'<th>Registry</th>'),'Reseller list omits operation results and registry column');
+    check(str_contains($userList,'Some requests could not be submitted') && str_contains($userList,'not-permitted.net') && str_contains($userList,'domain_unavailable'), 'Unsupported bulk member remains visible even without an EPP job');
+    $summary=Twig::create(dirname(__DIR__).'/panel/views',['cache'=>false,'autoescape'=>'html'])->getEnvironment()->render('partials/domain_operations.twig',[
+        'path'=>'/domains','section'=>null,'operations'=>[
+            ['name'=>'<bad>.com','status'=>'rejected','message'=>'invalid_parameters: <script>bad</script>','steps'=>[]],
+            ['name'=>'late.com','status'=>'rejected','message'=>'','steps'=>[
+                ['status'=>'succeeded','job_uuid'=>Util::uuid()],
+                ['status'=>'rejected','job_uuid'=>null,'message'=>'insufficient_funds: Cannot submit the next step.']]],
+            ['name'=>'done.com','status'=>'succeeded','message'=>'','steps'=>[]]
+        ]]);
+    check(str_contains($summary,'&lt;bad&gt;.com') && str_contains($summary,'&lt;script&gt;bad&lt;/script&gt;') && !str_contains($summary,'<script>bad</script>'),'Pre-job error names and messages are escaped');
+    check(str_contains($summary,'insufficient_funds') && !str_contains($summary,'done.com') && !str_contains($summary,'Operation results'),'Failed unsubmitted steps remain visible without restoring the full result panel');
     check(str_contains($userList,'<th>Registered</th>') && str_contains($userList,'2026-01-01') && str_contains($userList,'2028-01-01'),'Reseller list shows cached registration and expiry dates');
     check(str_contains($userList,'State / registry status') && str_contains($userList,'clientTransferProhibited') && str_contains($userList,'title="Local state"'),'Local state and all registry statuses share a table cell');
     check(str_contains($userList,'&lt;script&gt;status&lt;/script&gt;') && !str_contains($userList,'PrivateDomainSecret'),'Listing escapes registry status and never renders authInfo');
@@ -140,6 +151,7 @@ try {
     check(request($detail)->getStatusCode()===404 && request($detail.'?format=json')->getStatusCode()===404,'Foreign detail/polling hidden');
     check(request($detail,'POST',['action'=>'delete','key'=>Util::uuid(),'confirm'=>'yes'])->getStatusCode()===404,'Foreign mutations hidden');
     check(!str_contains((string)request('/domains')->getBody(),'one.com'),'Foreign list hidden');
+    check(!str_contains((string)request('/domains')->getBody(),'not-permitted.net'),'Another reseller cannot see pre-job failure summaries');
     PanelSession::login(Auth::login($pdo,'admin',$password,'127.0.0.1'));
     check(str_contains((string)request('/admin/domains')->getBody(),'one.com'),'Admin sees all domains');
     $adminList=(string)request('/admin/domains?batch='.$create['key'])->getBody();
