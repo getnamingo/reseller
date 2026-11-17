@@ -441,7 +441,7 @@ final class Auth
             throw new ApiException(401, 'unauthorized', 'A valid bearer token is required.');
         }
         $stmt = $pdo->prepare(
-            "SELECT t.id AS token_id, r.id, r.username, r.role, r.currency, w.available_balance, w.held_balance
+            "SELECT t.id AS token_id, r.id, r.username, r.email, r.role, r.currency, w.available_balance, w.held_balance
              FROM auth_tokens t
              JOIN resellers r ON r.id = t.reseller_id
              JOIN wallets w ON w.reseller_id = r.id

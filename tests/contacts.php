@@ -61,10 +61,15 @@ try {
         $pdo->prepare('INSERT INTO registries (id, name, profile, config_nonce, config_cipher) VALUES (?, ?, ?, ?, ?)')->execute([$id, $name, $profile, $nonce, $cipher]);
         foreach ([$a, $b] as $owner) { $pdo->prepare('INSERT INTO reseller_registries (reseller_id, registry_id) VALUES (?, ?)')->execute([$owner, $id]); }
     }
+    $pdo->prepare('UPDATE resellers SET email=? WHERE id=?')->execute(['reseller-header@example.test',$a]);
+    $pdo->prepare('UPDATE resellers SET email=? WHERE id=?')->execute(['admin-header@example.test',$root]);
     $actor = ['id' => $a, 'role' => 1]; $admin = ['id' => $root, 'role' => 0];
     $panel = new PanelController($pdo, Twig::create(dirname(__DIR__) . '/panel/views', ['cache' => false, 'autoescape' => 'html']), new PanelApi(new Client()));
     PanelSession::login(Auth::login($pdo, 'reseller-a', $password, '127.0.0.1'));
     $list = html('/contacts');
+    check(str_contains($list,'<div class="small text-secondary">reseller-header@example.test</div>'),'Shared panel header receives the authenticated reseller email');
+    $pdo->prepare('UPDATE resellers SET email=? WHERE id=?')->execute(['updated-header@example.test',$a]);
+    check(str_contains(html('/contacts'),'<div class="small text-secondary">updated-header@example.test</div>'),'Header picks up email edits without logging in again');
     check(str_contains($list, 'data-bs-target="#add-contact"') && str_contains($list, 'modal-dialog-scrollable'), 'Header add-contact modal');
     check(str_contains($list,'<select class="form-select" name="fields[country]"') && str_contains($list,'Bulgaria (BG)') && !str_contains($list,'<input id="contact-country"'),'Reseller contact create uses country names with ISO code option values');
     check(substr_count($list, 'name="extra_key[') === 5 && substr_count($list, 'name="extra_value[') === 5, 'Exactly five two-input extra rows');
@@ -103,6 +108,7 @@ try {
     check(!str_contains(html('/contacts'), $id), 'Reseller contact list does not leak another owner');
     check(request('/contacts/' . $id . '?format=json')->getStatusCode() === 404, 'Polling cannot leak foreign contact data');
     PanelSession::login(Auth::login($pdo, 'admin', $password, '127.0.0.1'));
+    check(str_contains(html('/admin/contacts'),'<div class="small text-secondary">admin-header@example.test</div>'),'Shared admin header receives the signed-in administrator email');
     check(str_contains(html('/admin/contacts'), $id) && str_contains(html('/admin/contacts'), 'reseller-a'), 'Admin sees every contact and owner');
     check(request('/contacts/' . $id)->getStatusCode() === 404, 'Admin reseller workspace remains own-only');
     check(request('/admin/contacts/' . $id)->getStatusCode() === 200, 'Admin can manage another reseller contact');
