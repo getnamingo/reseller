@@ -1,4 +1,4 @@
-{% if operations %}
+{% if operations and (section or path == '/transfers') %}
 <div class="card mt-4"><div class="card-header"><h2 class="card-title">Operation results</h2></div><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>Domain</th><th>Status</th><th>Registry operations / result</th></tr></thead><tbody>
 {% for op in operations %}<tr><td>{{ op.name }}</td><td><span class="badge {{ op.status == 'succeeded' ? 'bg-green-lt' : (op.status in ['rejected','unknown'] ? 'bg-red-lt' : 'bg-blue-lt') }}">{{ op.status }}</span></td><td>
 {% if op.message %}<div class="text-danger">{{ op.message }}</div>{% endif %}
@@ -7,5 +7,6 @@
 {% if op.status == 'unknown' %}<div class="text-danger">The outcome is uncertain. Ask the registrar to reconcile this operation before submitting another request.</div>{% endif %}
 </td></tr>{% endfor %}</tbody></table></div><div class="card-footer text-secondary">Each registry operation has its own outcome. A later failure does not undo earlier successful steps. Saved sequences continue through the API queue even when this page is closed.</div></div>
 {% endif %}
-<div id="domain-progress" class="text-secondary mt-3" role="status" data-version="{{ version }}" data-pending="{{ pending ? '1' : '0' }}">{% if pending %}Updating operation results automatically…{% endif %}</div>
+<div id="domain-progress" class="text-secondary mt-3" role="status" data-version="{{ version }}" data-pending="{{ pending ? '1' : '0' }}">{% if pending %}{{ (section or path == '/transfers') ? 'Updating operation results automatically…' : 'Updating domains automatically…' }}{% endif %}</div>
+{% if not section and path == '/domains' %}<div class="text-secondary small mt-2">View operation outcomes on the <a href="/jobs">Jobs page</a>.</div>{% endif %}
 <script src="/domains.js" defer></script>

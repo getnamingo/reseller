@@ -266,6 +266,30 @@ final class Domains
             JOIN registries r ON r.id = o.registry_id JOIN resellers u ON u.id = o.reseller_id WHERE {$where}
             ORDER BY o.object_name, o.registry_id LIMIT 51 OFFSET {$offset}", $args);
         $next = count($rows) > 50; if ($next) { array_pop($rows); }
+        // Read the same bounded history as domain details, in one query for this page.
+        $snapshots = [];
+        if ($rows !== []) {
+            $tuples = implode(',', array_fill(0, count($rows), '(?,?,?)'));
+            $owners = [];
+            foreach ($rows as $row) { array_push($owners, $row['reseller_id'], $row['registry_id'], $row['object_name']); }
+            $history = PanelData::rows($pdo, "SELECT * FROM (
+                SELECT p.*, ROW_NUMBER() OVER (PARTITION BY reseller_id, registry_id, domainname ORDER BY created_at DESC, id DESC) AS position
+                FROM panel_domain_operations p WHERE (reseller_id, registry_id, domainname) IN ({$tuples})
+                ) recent WHERE position <= 50 ORDER BY created_at DESC, id DESC", $owners);
+            foreach ($history as $operation) {
+                $key = $operation['reseller_id'] . ':' . $operation['registry_id'] . ':' . $operation['domainname'];
+                if (isset($snapshots[$key])) { continue; }
+                $info = self::info([self::decode($operation)]);
+                if ($info !== []) { $snapshots[$key] = $info; }
+            }
+        }
+        foreach ($rows as &$row) {
+            $info = $snapshots[$row['reseller_id'] . ':' . $row['registry_id'] . ':' . $row['object_name']] ?? [];
+            $row['registered_at'] = is_string($info['crDate'] ?? null) ? $info['crDate'] : null;
+            $row['expires_at'] = is_string($info['exDate'] ?? null) ? $info['exDate'] : null;
+            $row['registry_statuses'] = array_values(array_filter(is_array($info['status'] ?? null) ? $info['status'] : [], 'is_string'));
+        }
+        unset($row);
         return ['rows' => $rows, 'next' => $next];
     }
 
