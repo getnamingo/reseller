@@ -1,0 +1,8 @@
+/var/log/namingo-invoicing.log {
+    monthly
+    rotate 12
+    compress
+    missingok
+    notifempty
+    create 0640 namingo-api namingo-api
+}

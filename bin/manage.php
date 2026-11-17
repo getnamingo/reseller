@@ -165,6 +165,9 @@ try {
             if ($exists !== false && !$pdo->query("SELECT 1 FROM schema_migrations WHERE version = '007_panel_domains'")->fetchColumn()) {
                 $pdo->exec(file_get_contents($root . '/database/007_panel_domains.sql'));
             }
+            if ($exists !== false && !$pdo->query("SELECT 1 FROM schema_migrations WHERE version = '009_invoicing'")->fetchColumn()) {
+                require $root . '/database/009_invoicing.php';
+            }
             $backfillTransfers = $exists !== false && !$pdo->query("SELECT 1 FROM schema_migrations WHERE version = '008_transfer_history'")->fetchColumn();
             $sql = file_get_contents($root . '/database/schema.sql');
             if ($sql === false) {

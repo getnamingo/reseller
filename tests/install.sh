@@ -46,6 +46,11 @@ check grep -Fq 'root * /opt/namingo-reseller-api/panel/public' "$work/Caddyfile"
 check grep -Fq 'php_fastcgi unix//run/php/namingo-reseller.sock' "$work/Caddyfile"
 check grep -Fq 'env HTTPS on' "$work/Caddyfile"
 check bash -n "$root/deploy/install.sh"
+check grep -Fxq 'INVOICING_ENABLED=0' "$work/app.env"
+check grep -Fxq 'DATA_DIRECTORY=/var/lib/namingo-api/data' "$work/app.env"
+check test "$(awk '!/^#/ && NF > 5 {print $1,$2,$3,$4,$5,$6}' "$root/deploy/namingo-reseller-invoicing.cron")" = '15 4 2 * * namingo-api'
+check grep -Fq '/usr/bin/flock -n /var/lib/namingo-api/data/invoicing.lock' "$root/deploy/namingo-reseller-invoicing.cron"
+check grep -Fq '/bin/invoicing.php' "$root/deploy/namingo-reseller-invoicing.cron"
 if [[ -n ${CADDY_BIN:-} ]]; then
   "$CADDY_BIN" fmt --overwrite "$work/Caddyfile"
   check "$CADDY_BIN" validate --config "$work/Caddyfile" --adapter caddyfile

@@ -168,7 +168,7 @@ main() {
   curl -fsSL --retry 3 https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt -o /etc/apt/sources.list.d/caddy-stable.list
   chmod 0644 /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list
   apt-get update
-  apt-get install -y composer mariadb-client mariadb-server caddy \
+  apt-get install -y composer mariadb-client mariadb-server caddy cron fonts-dejavu-core logrotate \
     php8.5-cli php8.5-common php8.5-fpm php8.5-curl php8.5-mbstring php8.5-mysql \
     php8.5-swoole php8.5-xml php8.5-zip
   php8.5 -r 'foreach (["curl","openssl","pdo_mysql","mbstring","SimpleXML","sodium","swoole","xmlwriter"] as $e) { if (!extension_loaded($e)) { fwrite(STDERR,"Missing extension: $e\n"); exit(1); } }'
@@ -204,6 +204,13 @@ SQL
   chmod 0750 "$APP_DIR"/bin/*.php "$APP_DIR"/deploy/*.sh
   install -d -o namingo-api -g namingo-api -m 0750 /var/lib/namingo-api
   install -d -o namingo-panel -g namingo-api -m 0700 /var/lib/namingo-api/panel-sessions
+  install -d -o namingo-api -g namingo-api -m 0750 /var/lib/namingo-api/data /var/lib/namingo-api/data/invoices
+  touch /var/log/namingo-invoicing.log
+  chown namingo-api:namingo-api /var/log/namingo-invoicing.log
+  chmod 0640 /var/log/namingo-invoicing.log
+  install -o root -g root -m 0644 "$APP_DIR/deploy/namingo-reseller-invoicing.cron" /etc/cron.d/namingo-reseller-invoicing
+  install -o root -g root -m 0644 "$APP_DIR/deploy/namingo-reseller-invoicing.logrotate" /etc/logrotate.d/namingo-reseller-invoicing
+  systemctl enable --now cron
   manage migrate
   db_root <<'SQL'
 REVOKE CREATE, ALTER, INDEX, REFERENCES ON namingo_api.* FROM 'namingo_api'@'127.0.0.1';
@@ -244,9 +251,8 @@ SQL
   curl -fsS --retry 30 --retry-delay 2 --retry-all-errors --max-time 10 \
     --resolve "$panel_host:443:127.0.0.1" "https://$panel_host/login" -o /dev/null \
     || fail 'Panel HTTPS is not ready. Check journalctl -u caddy -u php8.5-fpm; services and credentials were retained.'
-  printf '\nNamingo Reseller is running.\n  Panel: https://%s/login\n  API: https://%s\n  Administrator: %s\n  Administrator UUID: %s\n\nBack up %s/.env and MariaDB separately.\nAdd registry credentials, TLD permissions and prices in the panel before provisioning.\n' \
+  printf '\nNamingo Reseller is running.\n  Panel: https://%s/login\n  API: https://%s\n  Administrator: %s\n  Administrator UUID: %s\n\nBack up %s/.env and MariaDB separately.\nAdd registry credentials, TLD permissions and prices in the panel before provisioning.\nConfigure issuer/SMTP and company VAT profiles, then enable monthly invoicing in .env.\n' \
     "$panel_host" "$api_host" "$admin_name" "$admin_uuid" "$APP_DIR"
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi
-

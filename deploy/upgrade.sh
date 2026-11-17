@@ -23,6 +23,16 @@ manage() {
     /usr/bin/php8.5 "$APP_DIR/bin/manage.php" "$@"
 }
 
+setup_invoicing() {
+  install -d -o namingo-api -g namingo-api -m 0750 /var/lib/namingo-api/data /var/lib/namingo-api/data/invoices
+  touch /var/log/namingo-invoicing.log
+  chown namingo-api:namingo-api /var/log/namingo-invoicing.log
+  chmod 0640 /var/log/namingo-invoicing.log
+  install -o root -g root -m 0644 "$APP_DIR/deploy/namingo-reseller-invoicing.cron" /etc/cron.d/namingo-reseller-invoicing
+  install -o root -g root -m 0644 "$APP_DIR/deploy/namingo-reseller-invoicing.logrotate" /etc/logrotate.d/namingo-reseller-invoicing
+  systemctl enable --now cron
+}
+
 revoke_migration() {
   db_root -e "REVOKE CREATE, ALTER, INDEX, REFERENCES ON namingo_api.* FROM 'namingo_api'@'127.0.0.1';"
   MIGRATION_GRANTED=0
@@ -51,6 +61,9 @@ apply_upgrade() {
   SERVICES_STOPPED=1
   systemctl stop php8.5-fpm namingo-reseller-api
   tar --acls --xattrs -czf "$BACKUP/application.tar.gz" -C "$APP_DIR" .
+  if [[ -d /var/lib/namingo-api/data ]]; then
+    tar --acls --xattrs -czf "$BACKUP/data.tar.gz" -C /var/lib/namingo-api data
+  fi
   cp -a "$UNIT_FILE" "$BACKUP/namingo-reseller-api.service"
   mariadb-dump --no-defaults --protocol=socket --socket=/run/mysqld/mysqld.sock --user=root \
     --single-transaction --routines --events --triggers --databases namingo_api | gzip >"$BACKUP/database.sql.gz"
@@ -68,6 +81,7 @@ apply_upgrade() {
   # install.sh deliberately removes these privileges after installation.
   db_root -e "GRANT CREATE, ALTER, INDEX, REFERENCES ON namingo_api.* TO 'namingo_api'@'127.0.0.1';"
   MIGRATION_GRANTED=1
+  setup_invoicing
   manage migrate
   revoke_migration
   install -m 0644 "$APP_DIR/deploy/namingo-reseller-api.service" "$UNIT_FILE"
@@ -119,6 +133,8 @@ main() {
   ' "$APP_DIR"
   db_root -e 'SELECT 1 FROM namingo_api.schema_migrations LIMIT 1' >/dev/null
 
+  apt-get update
+  apt-get install -y cron fonts-dejavu-core logrotate
   umask 077
   trap cleanup EXIT
   STAGE=$(mktemp -d /opt/namingo-reseller-upgrade.XXXXXX)
