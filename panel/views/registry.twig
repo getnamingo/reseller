@@ -9,8 +9,8 @@
 {% if view == 'edit' %}
 <div class="card card-body mb-4"><h2 class="card-title">Update registry</h2><form method="post">{{ forms.hidden('registry.save', csrf) }}{{ forms.input('name', 'Display name', 'text', registry.name) }}
 <label class="form-label mb-3">EPP profile<select class="form-select" name="profile">{% for profile in profiles %}<option{% if profile == registry.profile %} selected{% endif %}>{{ profile }}</option>{% endfor %}</select></label>
-<label class="form-label mb-3">Full replacement registry configuration JSON<textarea class="form-control" name="config_json" rows="8" required autocomplete="off" spellcheck="false"></textarea></label>
-<p class="text-secondary">Stored credentials are encrypted and never displayed. Supply the full configuration from your secure copy; see deploy/registry.example.json. Keep this registry on the same upstream account.</p><button class="btn btn-primary">Save registry</button></form></div>
+{% include 'partials/registry_fields.twig' %}
+<p class="text-secondary">Stored configuration is loaded into these administrator-only fields and saved encrypted.</p><button class="btn btn-primary">Save registry</button></form></div>
 <div class="row row-cards mb-4"><div class="col-md-6"><div class="card card-body h-100"><h2 class="card-title">Registry state</h2><form method="post">{{ forms.hidden('registry.status', csrf) }}<input type="hidden" name="enabled" value="{{ registry.enabled ? '0' : '1' }}"><button class="btn {{ registry.enabled ? 'btn-success' : 'btn-secondary' }}">{{ registry.enabled ? 'Enabled — disable' : 'Disabled — enable' }}</button></form></div></div>
 <div class="col-md-6"><div class="card card-body h-100"><h2 class="card-title">Reseller access</h2><form method="post">{{ forms.hidden('registry.access', csrf) }}{{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}{{ forms.enabled() }}<button class="btn btn-primary">Save access</button></form></div></div></div>
 {% elseif view == 'tlds' %}<p class="text-secondary">Toggle a suffix to enable or disable it. Removing an unused TLD deletes its assignments and exact prices; owned domains and unsettled jobs block removal.</p>
