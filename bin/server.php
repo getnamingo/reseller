@@ -148,7 +148,7 @@ $server->on('WorkerStart', static function (Server $server, int $workerId) use (
             catch (Throwable $e) { Db::reset(); error_log(Util::json(['event' => 'queue_dispatch_failed', 'type' => get_class($e)])); }
         });
         \Swoole\Timer::tick(5000, static function (): void {
-            try { Domains::tick(Db::pdo()); }
+            try { Domains::tick(Db::pdo()); \Namingo\ResellerApi\Transfers::discover(Db::pdo()); }
             catch (Throwable $e) { Db::reset(); error_log(Util::json(['event' => 'panel_domain_progress_failed', 'type' => get_class($e)])); }
         });
         \Swoole\Timer::tick(120_000, static function () use ($rateTable): void {
@@ -441,4 +441,3 @@ $server->on('Request', static function (Request $request, Response $response) us
 });
 
 $server->start();
-

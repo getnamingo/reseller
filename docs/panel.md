@@ -367,3 +367,15 @@ php8.5 tests/panel_router.php
 ```
 
 These fixtures simulate registry replies; live registry behavior must be checked in the registrar's test environments.
+
+## Transfers
+
+`/transfers` lists the account's incoming and outgoing transfers, including requests made through the API. `/admin/transfers` lists transfers for all resellers and lets an administrator choose the gaining reseller for a bulk request. Both pages use the domain/contact table layout and pagination.
+
+Use **Request transfer** beside the header. Enter up to 50 ASCII/punycode domains, one per line, as `domain,authorization-code`. Only the first comma separates the fields, so a code can contain commas. A code can be omitted for profiles that support code-free transfers (currently LT); other profiles return a per-domain validation error. The years and optional native registry parameters apply to the batch. TLD permissions select the registry, and the existing API ledger validates ownership, holds funds, processes the job and settles its configured price. Codes and native request data stay encrypted in the existing saved plans/jobs and are not shown in the transfer list.
+
+Pending incoming transfers offer **Refresh** and **Cancel**. Pending outgoing transfers offer **Refresh**, **Approve** and **Reject**. A confirmation modal accepts any additional parameters required by the registry. Decisions are checked against the transfer's direction, account and latest operation; queued, uncertain and terminal decisions do not offer another write. LT exposes requests only. Results retain links to the underlying jobs, and bulk failures are shown separately for each domain.
+
+The API service discovers external outgoing requests by scheduling read-only `domain.transfer` queries for idle, active managed domains, up to eight every five seconds. Each domain is checked at most once per `API_TRANSFER_CHECK_SECONDS` (default 900; minimum 60). Checks require active account/registry/TLD access and a profile that can query transfers. Profiles needing extra query parameters must be queried through their native API or panel form. This does not consume the registry's shared poll queue. Registry `acID`, `reID`, domain and request date identify outgoing transfers; discovery cannot list domains outside the local ownership inventory or requests the registry does not expose. Confirmed transfers out release local ownership. New request dates create separate history entries.
+
+Run the normal `php bin/manage.php migrate` upgrade before restarting the services. The `domain_transfers` index stores identifiers and statuses, without authorization codes. Migration imports existing transfer-job history without sending EPP commands or changing ownership. Run `php tests/transfers.php` with the same disposable MySQL test setup as the domain workflow tests.

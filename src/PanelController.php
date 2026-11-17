@@ -68,6 +68,11 @@ final class PanelController
                 PanelSession::clear();
                 return $this->redirect($response, '/login');
             }
+            if (in_array($path, ['/transfers', '/admin/transfers'], true)) {
+                $admin = $path === '/admin/transfers';
+                if ($admin && (int) $this->user['role'] !== 0) { throw new ApiException(403, 'admin_required', 'Administrator access is required.'); }
+                return $this->transfers($request, $response, $admin, $input, $ip);
+            }
             if (preg_match('#^(/admin)?/contacts(?:/([a-f0-9-]{36}))?$#D', $path, $match)) {
                 $admin = ($match[1] ?? '') === '/admin';
                 if ($admin && (int) $this->user['role'] !== 0) { throw new ApiException(403, 'admin_required', 'Administrator access is required.'); }
@@ -221,6 +226,43 @@ final class PanelController
         }
     }
 
+
+    private function transfers(ServerRequestInterface $request, ResponseInterface $response, bool $admin, array $input, string $ip): ResponseInterface
+    {
+        $path = $admin ? '/admin/transfers' : '/transfers';
+        $actor = $admin ? $this->user : array_replace($this->user, ['role' => 1]);
+        if ($request->getMethod() === 'POST') {
+            Domains::refresh($this->pdo, $actor);
+            $op = DomainParams::text($input, 'action');
+            if ($op === 'request') {
+                $batch = Domains::submit($this->pdo, $actor, array_replace($input, ['action' => 'transfer-request']), $ip);
+            } else {
+                if (!in_array($op, ['query', 'cancel', 'approve', 'reject'], true)) { throw new ApiException(422, 'invalid_action', 'Choose an available transfer action.'); }
+                $transfer = Transfers::get($this->pdo, $actor, DomainParams::text($input, 'transfer_id'));
+                if (!in_array($op, Transfers::actions($transfer), true)) { throw new ApiException(409, 'transfer_action_unavailable', 'This action is no longer available. Refresh the transfers list.'); }
+                $domain = Domains::owned($this->pdo, $actor, $transfer['registry_id'], $transfer['domainname']);
+                if ($domain['reseller_id'] !== $transfer['reseller_id']) { throw new ApiException(403, 'object_not_owned', 'Transfer belongs to a different account.'); }
+                $batch = Domains::submit($this->pdo, $actor, array_replace($input, ['action' => 'transfer-' . $op]), $ip, $domain);
+            }
+            return $this->redirect($response, $path . '?batch=' . $batch);
+        }
+        $batch = $request->getQueryParams()['batch'] ?? null;
+        if ($batch !== null && (!is_string($batch) || !Util::isUuid($batch))) { throw new ApiException(422, 'invalid_batch', 'Invalid operation reference.'); }
+        $active = Domains::refresh($this->pdo, $actor, $batch);
+        $ops = $batch === null ? [] : Domains::publicOperations(Domains::operations($this->pdo, $actor, $batch));
+        $page = $this->page($request);
+        $listing = Transfers::listing($this->pdo, $actor, $page);
+        $version = hash('sha256', Util::json([$listing, $ops]));
+        $pending = $active !== [] || array_filter($listing['rows'], fn ($r) => in_array($r['job_status'], ['queued', 'processing', 'pending'], true)) !== [];
+        if (($request->getQueryParams()['format'] ?? '') === 'json') {
+            $response->getBody()->write(Util::json(['version' => $version, 'pending' => $pending]));
+            return $response->withHeader('Content-Type', 'application/json')->withHeader('Cache-Control', 'no-store');
+        }
+        return $this->render($response, 'transfers.twig', $listing + ['title' => $admin ? 'Manage transfers' : 'Your transfers',
+            'section' => $admin ? 'transfers' : null, 'path' => $path, 'key' => Util::uuid(), 'operations' => $ops,
+            'pending' => $pending, 'version' => $version, 'batch' => $batch, 'page' => $page, 'paginate' => true,
+            'resellers' => $admin ? PanelData::rows($this->pdo, 'SELECT id, username FROM resellers ORDER BY username') : []]);
+    }
 
     private function domains(ServerRequestInterface $request, ResponseInterface $response, bool $admin, ?string $registry, ?string $name, array $input, string $ip): ResponseInterface
     {

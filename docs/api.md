@@ -414,11 +414,13 @@ upstream poll queue, avoiding accidental loss of unrelated registry notification
 
 The panel links every history row to scoped job details. Pending jobs offer **Check registry
 outcome**, transfers offer query/cancellation, retained deleted objects offer restore, and
-pending restores offer the validated report form. Registration and new transfer-request
-controls remain API-only. Administrators can manually resolve verified pending or unknown
+pending restores offer the validated report form. The domain page supports registration;
+the dedicated transfers page supports bulk transfer requests and direction-scoped decisions. Administrators can manually resolve verified pending or unknown
 jobs using the existing reconciliation controls/CLI.
 
 Run `tests/lifecycle.php` with the same `TEST_MYSQL_*` settings as the other suites. It tests
 real database reservations/ledger transitions, queue leases, registry-lock recovery,
 transfer correlation, cancellation, purge retention, report XML and v3-to-v4 migration.
 Registry observations are simulated; no live registry commands are sent.
+
+The dedicated panel transfer pages now support bulk incoming requests and direction-scoped decisions; see the Transfers section in `docs/panel.md`. API transfer jobs are included in the same transfer index. Idle managed domains are periodically queried to discover outgoing requests without consuming the shared poll queue.
