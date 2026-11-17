@@ -214,6 +214,33 @@ try {
     Domains::refresh($pdo,$admin,$retry['key']);
 
     check(value("SELECT domain_state FROM object_ownership WHERE registry_id=? AND object_name='one.com'",[$registry])==='deleted','Successful delete preserves the API redemption state');
+    // Purge can race either execution or creation of the optional info refresh.
+    foreach (['purge-before-read.com'=>true,'purge-before-auth.com'=>false] as $name=>$createRead) {
+        $pdo->prepare("INSERT INTO object_ownership (registry_id,object_type,object_name,reseller_id,active) VALUES (?,'domain',?,?,1)")->execute([$registry,$name,$a]);
+        $purgeDomain=Domains::owned($pdo,$admin,$registry,$name); $purgeKey=Util::uuid();
+        Domains::submit($pdo,$admin,['key'=>$purgeKey,'action'=>'delete','confirm'=>'yes'],'127.0.0.1',$purgeDomain);
+        $purgeOp=Domains::operations($pdo,$admin,$purgeKey)[0]; $purgeJob=$purgeOp['data']['steps'][0]['job_uuid'];
+        Ledger::completeJob($pdo,$purgeJob,'pending',['code'=>1001],1001);
+        if ($createRead) {
+            Domains::refresh($pdo,$admin,$purgeKey);
+            $purgeOp=Domains::operations($pdo,$admin,$purgeKey)[0];
+        } else {
+            // Persist the appended read just before its job is created, as after a crash.
+            $purgeOp['data']['steps'][]=['command'=>'domain.info','params'=>['domainname'=>$name],'job_uuid'=>null,'status'=>'prepared'];
+            [$nonce,$cipher]=Crypto::encrypt(Util::json($purgeOp['data']),'panel-domain:'.$purgeOp['id']);
+            $pdo->prepare("UPDATE panel_domain_operations SET status='pending',data_nonce=?,data_cipher=? WHERE id=?")->execute([$nonce,$cipher,$purgeOp['id']]);
+        }
+        $rawPurge=Namingo\ResellerApi\PanelData::rows($pdo,'SELECT * FROM epp_jobs WHERE id=?',[$purgeJob])[0];
+        check(Namingo\ResellerApi\Lifecycle::settle($pdo,$rawPurge,['code'=>2303],'test-client'),'Confirmed purge settles deletion before refresh');
+        if ($createRead) { Ledger::completeJob($pdo,$purgeOp['data']['steps'][1]['job_uuid'],'rejected',['code'=>2303,'msg'=>'Object does not exist'],2303); }
+        Domains::refresh($pdo,$admin,$purgeKey);
+        $purgeOp=Domains::operations($pdo,$admin,$purgeKey)[0];
+        check($purgeOp['status']==='succeeded' && $purgeOp['data']['steps'][1]['status']==='rejected','Optional info failure cannot reject successful deletion');
+        check(Ledger::fetchJob($pdo,$purgeJob)['status']==='succeeded' && value("SELECT COUNT(*) FROM object_ownership WHERE registry_id=? AND object_name=?",[$registry,$name])==='0','Successful purge and released ownership remain intact');
+        if (!$createRead) { check($purgeOp['data']['steps'][1]['job_uuid']===null,'Ownership denial before refresh job creation is also non-fatal'); }
+        Domains::refresh($pdo,$admin,$purgeKey);
+        check(Domains::operations($pdo,$admin,$purgeKey)[0]['status']==='succeeded','Later refresh preserves successful deletion');
+    }
     // Pending restores keep their reservation while the API permits report and info follow-ups.
     $pdo->prepare("INSERT INTO registry_prices (registry_id,command,tld,period,amount,currency) VALUES (?,'domain.restore','',0,25,'EUR')")->execute([$registry]);
     $deletedDomain=Domains::owned($pdo,$admin,$registry,'one.com');

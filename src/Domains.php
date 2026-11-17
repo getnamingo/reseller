@@ -203,6 +203,10 @@ final class Domains
         $states = array_column($row['data']['steps'], 'status');
         if (in_array('pending', $states, true)) { $row['status'] = 'pending'; }
         if ($states !== [] && array_diff($states, ['succeeded', 'skipped']) === []) { $row['status'] = 'succeeded'; }
+        // Delete status is authoritative; its best-effort info refresh cannot reverse success.
+        if (($row['data']['action'] ?? '') === 'delete' && ($row['data']['steps'][0]['status'] ?? '') === 'succeeded') {
+            $row['status'] = 'succeeded';
+        }
         self::save($pdo, $row);
         return $row;
     }
