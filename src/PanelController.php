@@ -116,6 +116,10 @@ final class PanelController
                             'permissions' => ['tld.access', 'tld.unassign'],
                         };
                         $action = $input['action'] ?? '';
+                        if ($view === 'edit' && $action === 'registry.generate_ssl') {
+                            $response->getBody()->write(Util::json(RegistryForm::generateSsl($input)));
+                            return $response->withHeader('Content-Type','application/json')->withHeader('Cache-Control','private, no-store');
+                        }
                         if (!in_array($action, $allowed, true)) { throw new ApiException(422, 'invalid_action', 'Choose an action offered on this registry page.'); }
                         if ($action === 'registry.save' && ($input['registry_fields'] ?? '') === '1') {
                             $input['config_json'] = Util::json(RegistryForm::config(DomainParams::text($input,'profile'),$input,$this->registryConfig($registry['id'])));

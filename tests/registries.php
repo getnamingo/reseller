@@ -129,6 +129,24 @@ try {
     check(str_contains($edit,'value="fields.registry.invalid"') && str_contains($edit,'value="field-user"') && str_contains($edit,'value="2001:db8::10"'),'Saved structured values reload for edit');
     check(str_contains($response->getHeaderLine('Cache-Control'),'no-store'),'Credential edit response is not cached');
     check(!str_contains($edit,'name="config_json"') && !str_contains(html('/admin/registries'),'name="config_json"'),'Both forms omit raw JSON textarea');
+    check(!str_contains(html('/admin/registries'),'data-registry-ssl-generator'),'SSL generator absent from create registry');
+    check(str_contains($edit,'Generate SSL') && str_contains($edit,'/registry-ssl.js'),'SSL generator present only on update registry');
+    $beforeCipher=$raw['config_cipher'];$beforeAudit=value('SELECT COUNT(*) FROM audit_events');
+    $generate=['action'=>'registry.generate_ssl','registry_debug'=>'1','ca_pem'=>'','client_cert_pem'=>'','client_key_pem'=>'','client_key_passphrase'=>''];
+    check(request('/admin/registries/'.$fieldId,'POST',$generate,false)->getStatusCode()===403,'SSL generation requires CSRF');
+    check(request('/admin/registries/'.$fieldId,'POST',array_replace($generate,['registry_debug'=>'0']))->getStatusCode()===422,'SSL generation requires debug on');
+    check(request('/admin/registries/'.$fieldId,'POST',array_replace($generate,['client_key_pem'=>'existing']))->getStatusCode()===409,'SSL generation refuses populated fields');
+    check(request('/admin/registries/'.$fieldId.'/tlds','POST',$generate)->getStatusCode()===422,'Generation unavailable on TLD page');
+    $generatedResponse=request('/admin/registries/'.$fieldId,'POST',$generate);
+    $generated=json_decode((string)$generatedResponse->getBody(),true);
+    check($generatedResponse->getStatusCode()===200 && openssl_x509_check_private_key($generated['client_cert_pem'],$generated['client_key_pem']),'Authenticated generation returns valid PEM pair');
+    check(str_contains($generatedResponse->getHeaderLine('Cache-Control'),'no-store'),'Generated private key response not cached');
+    check(value('SELECT config_cipher FROM registries WHERE id=?',[$fieldId])===$beforeCipher && value('SELECT COUNT(*) FROM audit_events')===$beforeAudit,'Generation alone writes no registry or audit data');
+    $draftFields=array_replace($fields,['registry_debug'=>'1','client_cert_pem'=>$generated['client_cert_pem'],'client_key_pem'=>$generated['client_key_pem']]);
+    check(request('/admin/registries/'.$fieldId,'POST',$draftFields)->getStatusCode()===303,'Explicit Save registry stores generated fields');
+    $savedRow=Namingo\ResellerApi\PanelData::rows($pdo,'SELECT * FROM registries WHERE id=?',[$fieldId])[0];
+    $savedSsl=json_decode(Crypto::decrypt($savedRow['config_nonce'],$savedRow['config_cipher'],'registry-config:'.$fieldId),true);
+    check($savedSsl['connection']['client_cert_pem']===trim($generated['client_cert_pem']) && $savedSsl['connection']['client_key_pem']===trim($generated['client_key_pem']),'Generated pair stored only through normal encrypted save');
     $fields['epp_host']='updated.registry.invalid';$fields['registry_debug']='1';$fields['registry_id']=$two;
     check(request('/admin/registries/'.$fieldId,'POST',$fields)->getStatusCode()===303,'Structured edit saves against URL registry');
     $raw=Namingo\ResellerApi\PanelData::rows($pdo,'SELECT * FROM registries WHERE id=?',[$fieldId])[0];
@@ -137,6 +155,7 @@ try {
     check(request('/admin/registries','POST',$fields,false)->getStatusCode()===403,'Structured save requires CSRF');
     check(request('/admin/registries/'.$fieldId,'POST',array_replace($fields,['bind_ip'=>'bad-bind']))->getStatusCode()===422,'Invalid structured settings report validation error');
     PanelSession::login(Auth::login($pdo, 'reseller-a', $password, '127.0.0.1'));
+    check(request('/admin/registries/'.$fieldId,'POST',$generate)->getStatusCode()===403,'Non-admin cannot generate SSL');
     foreach ([$base, $base . '/tlds', $base . '/permissions'] as $path) {
         check(request($path)->getStatusCode() === 403, 'Non-admin cannot open registry subpage');
         check(request($path, 'POST', ['action' => 'registry.status', 'enabled' => '0'])->getStatusCode() === 403, 'Non-admin cannot mutate registry subpage');

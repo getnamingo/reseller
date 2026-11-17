@@ -7,10 +7,10 @@
 <p class="text-secondary">Registry UUID: <span class="uuid">{{ registry.id }}</span></p>
 <datalist id="resellers">{% for reseller in resellers %}<option value="{{ reseller.id }}">{{ reseller.username }}</option>{% endfor %}</datalist>
 {% if view == 'edit' %}
-<div class="card card-body mb-4"><h2 class="card-title">Update registry</h2><form method="post">{{ forms.hidden('registry.save', csrf) }}{{ forms.input('name', 'Display name', 'text', registry.name) }}
+<div class="card card-body mb-4"><h2 class="card-title">Update registry</h2><form method="post" id="update-registry-form">{{ forms.hidden('registry.save', csrf) }}{{ forms.input('name', 'Display name', 'text', registry.name) }}
 <label class="form-label mb-3">EPP profile<select class="form-select" name="profile">{% for profile in profiles %}<option{% if profile == registry.profile %} selected{% endif %}>{{ profile }}</option>{% endfor %}</select></label>
-{% include 'partials/registry_fields.twig' %}
-<p class="text-secondary">Stored configuration is loaded into these administrator-only fields and saved encrypted.</p><button class="btn btn-primary">Save registry</button></form></div>
+{% include 'partials/registry_fields.twig' with {registry_ssl_generator: true} %}
+<p class="text-secondary">Stored configuration is loaded into these administrator-only fields and saved encrypted.</p><button class="btn btn-primary" type="submit">Save registry</button></form></div>
 <div class="row row-cards mb-4"><div class="col-md-6"><div class="card card-body h-100"><h2 class="card-title">Registry state</h2><form method="post">{{ forms.hidden('registry.status', csrf) }}<input type="hidden" name="enabled" value="{{ registry.enabled ? '0' : '1' }}"><button class="btn {{ registry.enabled ? 'btn-success' : 'btn-secondary' }}">{{ registry.enabled ? 'Enabled — disable' : 'Disabled — enable' }}</button></form></div></div>
 <div class="col-md-6"><div class="card card-body h-100"><h2 class="card-title">Reseller access</h2><form method="post">{{ forms.hidden('registry.access', csrf) }}{{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}{{ forms.enabled() }}<button class="btn btn-primary">Save access</button></form></div></div></div>
 {% elseif view == 'tlds' %}<p class="text-secondary">Toggle a suffix to enable or disable it. Removing an unused TLD deletes its assignments and exact prices; owned domains and unsettled jobs block removal.</p>
@@ -27,4 +27,5 @@
 <div class="modal modal-blur fade" id="permit-tld" tabindex="-1" aria-labelledby="permit-tld-title" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><form method="post" class="modal-content">{{ forms.hidden('tld.access', csrf) }}
 <div class="modal-header"><h2 class="modal-title" id="permit-tld-title">Permit a TLD — {{ registry.name }}</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div><div class="modal-body">{{ forms.input('reseller_id', 'Reseller UUID', 'text', '', 'resellers') }}<label class="form-label mb-3">TLD<select class="form-select" name="tld" required><option value="">Choose a TLD</option>{% for tld in tlds %}<option>{{ tld.tld }}</option>{% endfor %}</select></label>{{ forms.enabled() }}<p class="text-secondary">Grant registry access first. Both registry and TLD permissions must be enabled; the API enforces these permissions too.</p></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary">Save permission</button></div>
 </form></div></div>{% endif %}
+{% if view == 'edit' %}<script src="/registry-ssl.js" defer></script>{% endif %}
 {% endblock %}
