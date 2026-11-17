@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "0ab92bce7bd26dc3e9b73d4369ada42d",
+    "content-hash": "4817587008cf9147e649867cd4357d95",
     "packages": [
         {
             "name": "argora/tabler-assets",
@@ -1531,16 +1531,16 @@
         },
         {
             "name": "pinga/tembo",
-            "version": "v1.1.23",
+            "version": "v1.1.24",
             "source": {
                 "type": "git",
                 "url": "https://github.com/getnamingo/epp-client.git",
-                "reference": "e4a48e855f7123205446e2faf4a768fcf5032c37"
+                "reference": "07089101b204bec0d582ce6265837baad5ce7d62"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/getnamingo/epp-client/zipball/e4a48e855f7123205446e2faf4a768fcf5032c37",
-                "reference": "e4a48e855f7123205446e2faf4a768fcf5032c37",
+                "url": "https://api.github.com/repos/getnamingo/epp-client/zipball/07089101b204bec0d582ce6265837baad5ce7d62",
+                "reference": "07089101b204bec0d582ce6265837baad5ce7d62",
                 "shasum": ""
             },
             "require": {
@@ -1571,10 +1571,10 @@
             "description": "A simple PHP EPP client",
             "support": {
                 "issues": "https://github.com/getnamingo/epp-client/issues",
-                "source": "https://github.com/getnamingo/epp-client/tree/v1.1.23"
+                "source": "https://github.com/getnamingo/epp-client/tree/v1.1.24"
             },
-            "time": "2026-10-05T13:53:20+00:00",
-            "published-time": "2026-10-05T13:54:16+00:00"
+            "time": "2026-10-21T17:54:17+00:00",
+            "published-time": "2026-10-21T18:11:48+00:00"
         },
         {
             "name": "psr/container",

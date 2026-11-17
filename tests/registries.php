@@ -101,6 +101,21 @@ try {
     check(substr_count(table(html($base)), '<tr>') === 50 && substr_count(table(html($base . '?page=2')), '<tr>') === 2, 'Registry access table paginates all permission records');
     for ($i = 0; $i < 51; ++$i) { action('registry.save', ['name' => sprintf('Paging registry %02d', $i), 'profile' => 'generic', 'config_json' => $config]); }
     check(substr_count(table(html('/admin/registries')), '<tr>') === 50 && substr_count(table(html('/admin/registries?page=2')), '<tr>') === 3, 'Main registry table remains paginated');
+    // Both new profiles must be selectable, persist on create/update and resolve to the pinned client's implementation.
+    foreach (['RO'=>'RoEpp','SI'=>'SiEpp'] as $profile=>$class) {
+        check(Namingo\ResellerApi\CommandCatalog::normalizeProfile(strtolower($profile)) === $profile, $profile . ' normalizes for CLI/API configuration');
+        check(str_contains(html('/admin/registries'), '>' . $profile . '</option>'), $profile . ' offered in add-registry form');
+        check(request('/admin/registries','POST',['action'=>'registry.save','name'=>'Profile '.$profile,'profile'=>$profile,'config_json'=>$config])->getStatusCode()===303, $profile . ' registry can be created');
+        $profileId=value('SELECT id FROM registries WHERE name=?',['Profile '.$profile]);
+        check(value('SELECT profile FROM registries WHERE id=?',[$profileId])===$profile, $profile . ' persisted on create');
+        check(str_contains(html('/admin/registries/'.$profileId),'<option selected>'.$profile.'</option>'), $profile . ' preselected in update form');
+        $replacement=$profile==='RO'?'SI':'RO';
+        check(request('/admin/registries/'.$profileId,'POST',['action'=>'registry.save','name'=>'Updated profile '.$profile,'profile'=>$replacement,'config_json'=>$config])->getStatusCode()===303
+            && value('SELECT profile FROM registries WHERE id=?',[$profileId])===$replacement, $profile . ' registry profile can be updated');
+        $client=Pinga\Tembo\EppRegistryFactory::create($profile);
+        check(get_class($client)==='Pinga\\Tembo\\Registries\\'.$class, $profile . ' resolves to its registry-specific EPP client');
+    }
+    check(Composer\InstalledVersions::getPrettyVersion('pinga/tembo')==='v1.1.24', 'Installed EPP client is pinned to 1.1.24');
     PanelSession::login(Auth::login($pdo, 'reseller-a', $password, '127.0.0.1'));
     foreach ([$base, $base . '/tlds', $base . '/permissions'] as $path) {
         check(request($path)->getStatusCode() === 403, 'Non-admin cannot open registry subpage');

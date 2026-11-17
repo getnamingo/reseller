@@ -532,7 +532,7 @@ final class CommandCatalog
 
     private const PROFILES = [
         'generic', 'EE', 'EU', 'FI', 'FR', 'FRED', 'GE', 'GR', 'HK', 'HR', 'IS', 'IT',
-        'LT', 'LV', 'MX', 'NO', 'PL', 'PT', 'SE', 'UA', 'VRSN',
+        'LT', 'LV', 'MX', 'NO', 'PL', 'PT', 'RO', 'SE', 'SI', 'UA', 'VRSN',
     ];
 
     public static function method(string $command): string

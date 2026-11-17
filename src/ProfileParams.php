@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Namingo\ResellerApi;
 
-/** Local parameter requirements of the pinned pinga/tembo 1.1.23 serializers. */
+/** Local parameter requirements of the pinned pinga/tembo 1.1.24 serializers. */
 final class ProfileParams
 {
     private const REQUIRED = [
