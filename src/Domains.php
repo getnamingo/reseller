@@ -177,6 +177,14 @@ final class Domains
                 $step['status'] = $job['status']; $step['epp_code'] = $job['epp_code']; $step['result'] = $job['result'];
                 $step['message'] = $job['result']['error'] ?? $job['result']['msg'] ?? $job['result']['message'] ?? '';
                 $row['status'] = $job['status'];
+                if ($job['status'] === 'pending' && $step['command'] === 'domain.delete') {
+                    // An accepted delete must refresh CP status without settling or replaying the write.
+                    if (!isset($row['data']['steps'][$i + 1])) {
+                        $row['data']['steps'][] = ['command' => 'domain.info', 'params' => ['domainname' => $row['domainname']],
+                            'job_uuid' => null, 'status' => 'prepared'];
+                    }
+                    continue;
+                }
                 if ($job['status'] !== 'succeeded') { break; }
             } catch (ApiException $e) {
                 $step['message'] = $e->errorCode . ': ' . $e->getMessage();
@@ -193,6 +201,7 @@ final class Domains
         }
         unset($step);
         $states = array_column($row['data']['steps'], 'status');
+        if (in_array('pending', $states, true)) { $row['status'] = 'pending'; }
         if ($states !== [] && array_diff($states, ['succeeded', 'skipped']) === []) { $row['status'] = 'succeeded'; }
         self::save($pdo, $row);
         return $row;

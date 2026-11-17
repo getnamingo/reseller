@@ -192,7 +192,27 @@ try {
     $html=(string)request('/admin/domains/'.$registry.'/one.com?batch='.$delete['key'])->getBody();
     check(str_contains($html,'2305') && str_contains($html,'&lt;script&gt;in use&lt;/script&gt;'),'Native EPP errors displayed and escaped');
     check(Domains::owned($pdo,$admin,$registry,'one.com')['active']==='1','Rejected delete preserves ownership');
-    $retry=$delete; $retry['key']=Util::uuid(); Domains::submit($pdo,$admin,$retry,'127.0.0.1',$domain); drain($retry['key'],$admin);
+    $retry=$delete; $retry['key']=Util::uuid(); Domains::submit($pdo,$admin,$retry,'127.0.0.1',$domain);
+    $pendingDelete=Domains::operations($pdo,$admin,$retry['key'])[0]; $deleteJob=$pendingDelete['data']['steps'][0]['job_uuid'];
+    Ledger::completeJob($pdo,$deleteJob,'pending',['code'=>1001,'msg'=>'Command completed successfully; action pending'],1001);
+    $deleteCount=value("SELECT COUNT(*) FROM epp_jobs WHERE command='domain.delete'");
+    Domains::refresh($pdo,$admin,$retry['key']);
+    $pendingDelete=Domains::operations($pdo,$admin,$retry['key'])[0];
+    check(count($pendingDelete['data']['steps'])===2 && $pendingDelete['data']['steps'][1]['command']==='domain.info','Accepted pending delete schedules a read-only CP refresh');
+    $infoJob=$pendingDelete['data']['steps'][1]['job_uuid'];
+    Ledger::completeJob($pdo,$infoJob,'succeeded',['code'=>1000,'name'=>'one.com','clID'=>'test-client','status'=>['pendingDelete'],'crDate'=>'2026-01-01','exDate'=>'2028-01-01'],1000);
+    Domains::refresh($pdo,$admin,$retry['key']);
+    $pendingDelete=Domains::operations($pdo,$admin,$retry['key'])[0];
+    check($pendingDelete['status']==='pending' && Ledger::fetchJob($pdo,$deleteJob)['status']==='pending','Info success does not falsely complete the accepted delete');
+    check(Domains::info([$pendingDelete])['status']===['pendingDelete'],'CP reads fresh pendingDelete instead of the old ok status');
+    check(str_contains((string)request('/admin/domains/'.$registry.'/one.com')->getBody(),'pendingDelete'),'Domain details show pendingDelete without manual Sync');
+    check(str_contains((string)request('/admin/domains')->getBody(),'pendingDelete'),'Domain table shows the refreshed registry status');
+    Domains::refresh($pdo,$admin,$retry['key']);
+    check(count(Domains::operations($pdo,$admin,$retry['key'])[0]['data']['steps'])===2 && value("SELECT COUNT(*) FROM epp_jobs WHERE command='domain.delete'")===$deleteCount,'Repeated refresh neither duplicates info steps nor replays deletion');
+    $rawDelete=Namingo\ResellerApi\PanelData::rows($pdo,'SELECT * FROM epp_jobs WHERE id=?',[$deleteJob])[0];
+    check(Namingo\ResellerApi\Lifecycle::settle($pdo,$rawDelete,['code'=>1000,'name'=>'one.com','clID'=>'test-client','status'=>['pendingDelete'],'rgp_status'=>['redemptionPeriod']],'test-client'),'Registry confirmation still controls delete completion');
+    Domains::refresh($pdo,$admin,$retry['key']);
+
     check(value("SELECT domain_state FROM object_ownership WHERE registry_id=? AND object_name='one.com'",[$registry])==='deleted','Successful delete preserves the API redemption state');
     // Pending restores keep their reservation while the API permits report and info follow-ups.
     $pdo->prepare("INSERT INTO registry_prices (registry_id,command,tld,period,amount,currency) VALUES (?,'domain.restore','',0,25,'EUR')")->execute([$registry]);
