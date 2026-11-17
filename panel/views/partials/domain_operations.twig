@@ -1,4 +1,10 @@
-{% if operations %}
+{% if not section and path == '/domains' %}
+{% set failures = operations|filter(op => op.status == 'rejected' and (op.message or op.steps|filter(step => step.status == 'rejected' and not step.job_uuid)|length > 0)) %}
+{% if failures %}<div class="alert alert-danger mt-4" role="alert"><div><h3 class="alert-title">Some requests could not be submitted</h3><ul class="mb-0">
+{% for op in failures %}<li><strong>{{ op.name }}</strong>: {% if op.message %}{{ op.message }}{% else %}{% for step in op.steps|filter(step => step.status == 'rejected' and not step.job_uuid) %}{{ step.message|default('The request could not be submitted.', true) }}{% if not loop.last %}; {% endif %}{% endfor %}{% endif %}</li>{% endfor %}
+</ul></div></div>{% endif %}
+{% endif %}
+{% if operations and (section or path == '/transfers') %}
 <div class="card mt-4"><div class="card-header"><h2 class="card-title">Operation results</h2></div><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>Domain</th><th>Status</th><th>Registry operations / result</th></tr></thead><tbody>
 {% for op in operations %}<tr><td>{{ op.name }}</td><td><span class="badge {{ op.status == 'succeeded' ? 'bg-green-lt' : (op.status in ['rejected','unknown'] ? 'bg-red-lt' : 'bg-blue-lt') }}">{{ op.status }}</span></td><td>
 {% if op.message %}<div class="text-danger">{{ op.message }}</div>{% endif %}
@@ -7,5 +13,6 @@
 {% if op.status == 'unknown' %}<div class="text-danger">The outcome is uncertain. Ask the registrar to reconcile this operation before submitting another request.</div>{% endif %}
 </td></tr>{% endfor %}</tbody></table></div><div class="card-footer text-secondary">Each registry operation has its own outcome. A later failure does not undo earlier successful steps. Saved sequences continue through the API queue even when this page is closed.</div></div>
 {% endif %}
-<div id="domain-progress" class="text-secondary mt-3" role="status" data-version="{{ version }}" data-pending="{{ pending ? '1' : '0' }}">{% if pending %}Updating operation results automatically…{% endif %}</div>
+<div id="domain-progress" class="text-secondary mt-3" role="status" data-version="{{ version }}" data-pending="{{ pending ? '1' : '0' }}">{% if pending %}{{ (section or path == '/transfers') ? 'Updating operation results automatically…' : 'Updating domains automatically…' }}{% endif %}</div>
+{% if not section and path == '/domains' %}<div class="text-secondary small mt-2">View operation outcomes on the <a href="/jobs">Jobs page</a>.</div>{% endif %}
 <script src="/domains.js" defer></script>

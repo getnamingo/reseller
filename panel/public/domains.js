@@ -25,7 +25,7 @@
                 if (!dirty) { location.reload(); return; }
                 status.textContent = 'New operation results are available. Refresh after saving your form.';
             } else if (!pending) {
-                status.textContent = 'Operations updated. Review each result below.';
+                status.textContent = 'Domain operations updated.';
             }
         } catch (_) {
             failures++;
