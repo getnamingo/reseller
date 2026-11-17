@@ -229,9 +229,11 @@ parameter cannot select another reseller. No database migration is needed.
 
 | Endpoint | Optional filters | Returned data |
 | --- | --- | --- |
-| `GET /v1/jobs` | `registry_uuid`, `command`, `status` | All historical job metadata: UUID, registry, command, status, price/currency, EPP code and timestamps. Request/response payloads and secrets are excluded; use the existing `GET /v1/jobs/{uuid}` for a permitted individual result. |
+| `GET /v1/jobs` | `registry_uuid`, `command`, `status`, `source` | All historical job metadata: UUID, registry, command, status, price/currency, EPP code and timestamps. Request/response payloads and secrets are excluded; use the existing `GET /v1/jobs/{uuid}` for a permitted individual result. |
 | `GET /v1/prices` | `registry_uuid`, `command`, `tld`, `period` | Effective global/reseller price rows for enabled registry/TLD access, with registry UUID/name, command, TLD, exact term, total amount/currency and scope. Own overrides replace matching global rows. |
 | `GET /v1/domains` | `registry_uuid`, `name`, `active` | Currently owned or reserved domains, registry UUID/name, boolean active flag and optional pending-job UUID. Contacts and hosts are excluded. |
+
+`GET /v1/jobs` includes automatic discovery checks by default. Optional `source=requested`, `source=automatic`, or `source=all` filters job origin; each row exposes `source`. Single-job details identify scheduled discovery queries with `automatic_transfer_check`. Recorded statuses and registry responses are unchanged.
 
 All three accept `limit` (1–100, default 50) and `offset` (0–1000000, default 0).
 Responses follow this shape, plus the normal `request_id`:

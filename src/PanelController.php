@@ -497,11 +497,11 @@ final class PanelController
         switch ($path) {
             case '/':
                 $data += ['title' => 'Dashboard', 'jobs' => PanelData::rows($this->pdo,
-                    'SELECT id, command, status, price, currency, created_at FROM epp_jobs WHERE reseller_id = ? ORDER BY created_at DESC LIMIT 10', [$id]),
+                    "SELECT j.id, j.command, j.status, j.price, j.currency, j.created_at FROM epp_jobs j WHERE j.reseller_id = ? AND NOT " . Transfers::DISCOVERY_SQL . " ORDER BY j.created_at DESC LIMIT 10", [$id]),
                     'counts' => PanelData::rows($this->pdo, 'SELECT object_type, COUNT(*) AS total FROM object_ownership WHERE reseller_id = ? AND active = 1 GROUP BY object_type', [$id])];
                 return $this->render($response, 'dashboard.twig', $data);
             case '/jobs':
-                $filters = array_intersect_key($query, array_flip(['status', 'command', 'registry_uuid']));
+                $filters = array_intersect_key($query, array_flip(['status', 'command', 'registry_uuid', 'source'])) + ['source' => 'requested'];
                 $listing = SelfService::listing($this->pdo, $id, 'jobs', $filters + ['limit' => 50, 'offset' => $offset]);
                 return $this->render($response, 'jobs.twig', $data + ['title' => 'Job history', 'rows' => $listing['data'],
                     'paginate' => true, 'next' => $listing['pagination']['has_more'], 'filters' => $filters,
@@ -592,8 +592,8 @@ final class PanelController
             'prices' => ['', []],
             'deposits' => ['SELECT d.id, r.username, d.amount, d.currency, d.status, d.client_reference, d.created_at, d.decided_at FROM deposit_requests d JOIN resellers r ON r.id = d.reseller_id ORDER BY d.created_at DESC, d.id DESC',
                 ['id' => 'UUID', 'username' => 'Reseller', 'amount' => 'Amount', 'currency' => 'Currency', 'status' => 'Status', 'client_reference' => 'Reference', 'created_at' => 'Date', 'decided_at' => 'Decided']],
-            'jobs' => ['SELECT j.id AS admin_job_id, r.username, g.name AS registry, j.command, j.status, j.price, j.currency, j.created_at FROM epp_jobs j JOIN resellers r ON r.id = j.reseller_id JOIN registries g ON g.id = j.registry_id ORDER BY j.created_at DESC, j.id DESC',
-                ['admin_job_id' => 'UUID / details', 'username' => 'Reseller', 'registry' => 'Registry', 'command' => 'Command', 'status' => 'Status', 'price' => 'Price', 'currency' => 'Currency', 'created_at' => 'Date']],
+            'jobs' => ["SELECT CASE WHEN " . Transfers::DISCOVERY_SQL . " THEN 'Automatic transfer check' ELSE 'Customer request' END AS source, j.id AS admin_job_id, r.username, g.name AS registry, j.command, j.status, j.price, j.currency, j.created_at FROM epp_jobs j JOIN resellers r ON r.id = j.reseller_id JOIN registries g ON g.id = j.registry_id ORDER BY j.created_at DESC, j.id DESC",
+                ['admin_job_id' => 'UUID / details', 'source' => 'Source', 'username' => 'Reseller', 'registry' => 'Registry', 'command' => 'Command', 'status' => 'Status', 'price' => 'Price', 'currency' => 'Currency', 'created_at' => 'Date']],
             'ownership' => ['SELECT registry_id, reseller_id, object_type, object_name, active, domain_state, job_id FROM object_ownership ORDER BY registry_id, object_type, object_name',
                 ['registry_id' => 'Registry UUID', 'reseller_id' => 'Reseller UUID', 'object_type' => 'Type', 'object_name' => 'Object', 'active' => 'Ownership confirmed', 'domain_state' => 'Domain state', 'job_id' => 'Pending job']],
         };

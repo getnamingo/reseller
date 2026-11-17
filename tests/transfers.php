@@ -80,6 +80,20 @@ try {
     check(count($queries)===2,'Discovery schedules owned idle domains');
     Transfers::discover($pdo);
     check(value("SELECT COUNT(*) FROM epp_jobs WHERE idempotency_key LIKE 'transfer-discovery-%'")==='2','Discovery interval prevents repeated queries');
+    $automatic = Namingo\ResellerApi\SelfService::listing($pdo,$a,'jobs',['source'=>'automatic']);
+    check(count($automatic['data'])===1 && $automatic['data'][0]['source']==='automatic','Automatic source filter remains reseller scoped');
+    $autoId=$automatic['data'][0]['job_uuid'];
+    $requested = Namingo\ResellerApi\SelfService::listing($pdo,$a,'jobs',['source'=>'requested']);
+    check(!in_array($autoId,array_column($requested['data'],'job_uuid'),true),'Requested jobs exclude background checks before pagination');
+    check(in_array($autoId,array_column(Namingo\ResellerApi\SelfService::listing($pdo,$a,'jobs')['data'],'job_uuid'),true),'API job history retains background jobs by default');
+    check(Ledger::fetchJob($pdo,$autoId,$a)['automatic_transfer_check']===true,'Job detail identifies read-only discovery');
+    $defaultJobs=(string)request('/jobs')->getBody();
+    check(!str_contains($defaultJobs,$autoId) && str_contains($defaultJobs,'name="source"'),'Panel defaults to customer requests and offers source filter');
+    check(!str_contains((string)request('/')->getBody(),$autoId),'Background checks do not crowd the dashboard');
+    $autoDetail=Twig::create(dirname(__DIR__).'/panel/views',['cache'=>false,'autoescape'=>'html'])->getEnvironment()->render('job.twig',['job'=>Ledger::fetchJob($pdo,$autoId,$a)]);
+    check(str_contains($autoDetail,'Automatic transfer status check') && str_contains($autoDetail,'not a transfer request'),'Job detail explains automatic query origin');
+    $autoJobs=(string)request('/jobs?source=automatic')->getBody();
+    check(str_contains($autoJobs,$autoId) && str_contains($autoJobs,'Automatic transfer status query'),'Automatic checks remain visible and labelled through source filter');
     $date='2026-11-17T08:00:00Z';
     foreach($queries as $q) {
         $name=Ownership::params($q)['domainname'];
@@ -88,6 +102,13 @@ try {
     $out=Namingo\ResellerApi\PanelData::rows($pdo,"SELECT id FROM domain_transfers WHERE domainname='outgoing.com'")[0]['id'];
     $private=Namingo\ResellerApi\PanelData::rows($pdo,"SELECT id FROM domain_transfers WHERE domainname='private.com'")[0]['id'];
     check(Transfers::get($pdo,$actor,$out)['direction']==='outgoing','External request discovered as outgoing');
+    $negative=Ledger::createJob($pdo,$a,$registry,'domain.transfer','transfer-discovery-'.Util::uuid(),['domainname'=>'outgoing.com','op'=>'query']);
+    Ledger::completeJob($pdo,$negative['job_id'],'rejected',['code'=>2301,'msg'=>'The domain is NOT pending transfer'],2301);
+    check(Ledger::fetchJob($pdo,$negative['job_id'],$a)['status']==='rejected','Negative discovery preserves registry response instead of faking success');
+    $errors=Namingo\ResellerApi\SelfService::listing($pdo,$a,'jobs',['source'=>'automatic','status'=>'rejected']);
+    check(in_array($negative['job_id'],array_column($errors['data'],'job_uuid'),true),'Rejected background checks remain available with status filters');
+    check(Transfers::get($pdo,$actor,$out)['status']==='pending','Rejected unrelated discovery never rejects a real pending transfer');
+
     check(Transfers::actions(Transfers::get($pdo,$actor,$out))===['query','approve','reject'],'Losing account has correct actions');
     check(request('/transfers','POST',['key'=>Util::uuid(),'action'=>'cancel','transfer_id'=>$out])->getStatusCode()===409,'Losing account cannot cancel outgoing transfer');
     check(request('/transfers','POST',['key'=>Util::uuid(),'action'=>'approve','transfer_id'=>$private])->getStatusCode()===404,'Cannot act on another reseller transfer');
@@ -107,6 +128,8 @@ try {
     check(value("SELECT COUNT(*) FROM object_ownership WHERE object_name='outgoing.com'")==='0','Approved outgoing domain removed from ownership');
     check(Transfers::actions(Transfers::get($pdo,$actor,$out))===[],'Terminal transfer has no decisions');
     PanelSession::login(Auth::login($pdo,'admin',$password,'127.0.0.1'));
+    $adminJobs=(string)request('/admin/jobs')->getBody();
+    check(str_contains($adminJobs,$autoId) && str_contains($adminJobs,'Automatic transfer check'),'Admin history retains and labels automatic checks');
     $html=(string)request('/admin/transfers')->getBody();
     check(str_contains($html,'private.com') && str_contains($html,'outgoing.com') && str_contains($html,'Gaining reseller'),'Administrator sees all transfers and reseller selector');
     check(!str_contains((string)request('/transfers')->getBody(),'private.com'),'Admin workspace remains own-account-only');

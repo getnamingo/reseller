@@ -87,6 +87,18 @@ try {
     $encoded = json_encode($page1);
     verify(!str_contains($encoded, 'SECRET') && !str_contains($encoded, 'cipher') && !str_contains($encoded, 'request_hash'), 'Job listing never returns or decrypts payloads or secrets');
 
+    $backgroundId=$actual[count($actual)-1];
+    $original=$pdo->prepare('SELECT command,idempotency_key FROM epp_jobs WHERE id=?'); $original->execute([$backgroundId]); $before=$original->fetch();
+    $pdo->prepare("UPDATE epp_jobs SET command='domain.transfer',idempotency_key=? WHERE id=?")->execute(['transfer-discovery-'.$backgroundId,$backgroundId]);
+    $requested1=listing('jobs',['source'=>'requested','limit'=>50]);
+    $requested2=listing('jobs',['source'=>'requested','limit'=>50,'offset'=>50]);
+    verify(count($requested1['data'])===50 && count($requested2['data'])===4 && !$requested2['pagination']['has_more'],'Source filtering is applied before pagination');
+    verify(!in_array($backgroundId,array_column(array_merge($requested1['data'],$requested2['data']),'job_uuid'),true),'Automatic checks absent across requested pages');
+    verify(count(listing('jobs',['source'=>'all','limit'=>100])['data'])===55 && count(listing('jobs',['source'=>'automatic'])['data'])===1,'All and automatic filters preserve history');
+    try { listing('jobs',['source'=>'invalid']); throw new RuntimeException('Invalid source accepted'); }
+    catch (ApiException $e) { verify($e->errorCode==='invalid_filter','Invalid source rejected'); }
+    $pdo->prepare('UPDATE epp_jobs SET command=?,idempotency_key=? WHERE id=?')->execute([$before['command'],$before['idempotency_key'],$backgroundId]);
+
     $domains = listing('domains')['data'];
     verify(array_column($domains, 'domainname') === ['owned.com', 'pending.com'], 'Only own domains; contacts and hosts excluded');
     verify($domains[0]['active'] === true && $domains[1]['active'] === false, 'Active flags are JSON booleans');
