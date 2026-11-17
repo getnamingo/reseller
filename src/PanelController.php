@@ -627,6 +627,11 @@ final class PanelController
 
     private function render(ResponseInterface $response, string $template, array $data): ResponseInterface
     {
+        if (in_array($template, ['contacts.twig', 'contact.twig', 'account_edit.twig', 'billing.twig'], true)) {
+            $countries = array_column((new \League\ISO3166\ISO3166())->all(), 'name', 'alpha2');
+            asort($countries, SORT_NATURAL | SORT_FLAG_CASE);
+            $data['countries'] = $countries;
+        }
         $flash = $_SESSION['flash'] ?? null;
         unset($_SESSION['flash']);
         return $this->view->render($response, $template, $data + ['user' => $this->user, 'csrf' => $_SESSION['csrf'] ?? '', 'flash' => $flash]);

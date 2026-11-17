@@ -1,0 +1,6 @@
+{% set selected_country = country_value|default('')|trim|upper %}
+<select class="form-select" name="{{ country_name }}"{% if country_id|default('') %} id="{{ country_id }}"{% endif %} autocomplete="country"{% if country_required|default(false) %} required{% endif %}>
+<option value=""{% if selected_country == '' %} selected{% endif %}>Select a country</option>
+{% if selected_country != '' and countries[selected_country] is not defined %}<option value="{{ selected_country }}" selected>{{ selected_country }} (saved code)</option>{% endif %}
+{% for code, name in countries %}<option value="{{ code }}"{% if code == selected_country %} selected{% endif %}>{{ name }} ({{ code }})</option>{% endfor %}
+</select>
