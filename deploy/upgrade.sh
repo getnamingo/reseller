@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Upgrade the local layout created by deploy/install.sh, from a separate checkout.
+# Upgrade the local layout created by deploy/install.sh using a temporary current-main checkout.
 # shellcheck disable=SC2016
 set -Eeuo pipefail
 
@@ -101,7 +101,7 @@ check_ready() {
 
 main() {
   if [[ ${1:-} == --help || ${1:-} == -h ]]; then
-    printf 'Usage: sudo bash deploy/upgrade.sh\nRun from a separate, updated reseller checkout. Upgrades the standard local installer layout.\n'
+    printf 'Usage: sudo bash deploy/upgrade.sh\nUpgrades the standard local installer layout from the downloaded checkout.\n'
     return
   fi
   [[ $# == 0 ]] || fail 'Unknown argument. Use --help.'
@@ -147,4 +147,38 @@ main() {
   printf '\nUpgrade complete. Secrets, accounts and registry configuration preserved.\nBackup: %s\nCheck the existing panel URL and an availability check.\n' "$BACKUP"
 }
 
-if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi
+# Self-contained entry point: process substitution has no adjacent repository files.
+# Keep this parent alive so its EXIT trap removes the clone after the child finishes.
+bootstrap_require_root() { [[ $EUID -eq 0 ]] || fail 'Run this upgrade as root.'; }
+
+bootstrap() (
+  if [[ ${1:-} == --help || ${1:-} == -h ]]; then
+    printf 'Usage: sudo bash deploy/upgrade.sh\nDownloads current main into a temporary checkout, runs upgrade, and removes the checkout.\n'
+    exit 0
+  fi
+  [[ $# == 0 ]] || fail 'Unknown argument. Use --help.'
+  bootstrap_require_root
+  if ! command -v git >/dev/null || [[ ! -s /etc/ssl/certs/ca-certificates.crt ]]; then
+    command -v apt-get >/dev/null || fail 'Install Git and CA certificates before running this script.'
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y git ca-certificates
+  fi
+  umask 077
+  bootstrap_dir=$(mktemp -d "${TMPDIR:-/tmp}/namingo-reseller-upgrade.XXXXXX")
+  trap 'rm -rf -- "$bootstrap_dir"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  git clone --depth 1 --single-branch --branch main https://github.com/getnamingo/reseller.git "$bootstrap_dir/source"
+  [[ -f $bootstrap_dir/source/deploy/upgrade.sh && -f $bootstrap_dir/source/composer.lock ]] \
+    || fail 'Downloaded repository is incomplete.'
+  bash "$bootstrap_dir/source/deploy/upgrade.sh" --from-checkout
+)
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  if [[ ${1:-} == --from-checkout ]]; then
+    shift
+    main "$@"
+  else
+    bootstrap "$@"
+  fi
+fi

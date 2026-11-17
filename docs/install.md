@@ -22,12 +22,10 @@ On a fresh **Ubuntu 26.04** or **Debian 13** systemd server, point separate pane
 API DNS hostnames at the server and allow inbound TCP 80/443 before installing:
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y git
-git clone https://github.com/getnamingo/reseller.git
-cd reseller
-sudo bash deploy/install.sh
+sudo bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/getnamingo/reseller/main/deploy/install.sh)'
 ```
+
+Wget must be installed to fetch the entry script. The entry script installs Git/CA certificates if needed, clones current `main` into a private temporary directory, runs the cloned installer, and deletes the clone on success or failure. The `sudo bash -c` form creates process substitution inside the privileged shell, so its file descriptor is available to Bash. A local `bash deploy/install.sh` invocation uses the same fresh-clone workflow.
 
 The installer asks for both hostnames, the first administrator username and wallet
 currency, then asks you to confirm the installation summary. Its password prompt is
@@ -77,6 +75,7 @@ Installer regression checks can be run without root or installing services:
 
 ```bash
 bash tests/install.sh
+bash tests/bootstrap.sh # mocked download/cleanup and child-failure scenarios
 # Optionally also validate generated configurations with installed binaries:
 CADDY_BIN=/usr/bin/caddy FPM_BIN=/usr/sbin/php-fpm8.5 bash tests/install.sh
 ```
@@ -235,20 +234,15 @@ terms: LV/NO creation, PT renewal, and EE/FRED/FI/IT/LT transfer requests.
 
 ## Upgrade an installer-created demo
 
-Use `deploy/upgrade.sh` for an existing installation made by `deploy/install.sh`.
-Run it from a separate checkout outside `/opt/namingo-reseller-api`, for example the
-original `reseller` checkout used during installation:
+Use the upgrade entry script for an existing installation made by `deploy/install.sh`:
 
 ```bash
-cd /path/to/reseller
-git pull --ff-only
-sudo bash deploy/upgrade.sh
+sudo bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/getnamingo/reseller/main/deploy/upgrade.sh)'
 ```
 
-Review the incoming code first. You can check out a specific release/commit instead of
-pulling `main`; the script deploys the checked-out files and uses `composer.lock`.
-It does not pull Git changes, install OS packages, reset accounts or generate new secrets.
-If PHP/extension requirements change, install those packages before upgrading.
+The entry script clones current `main` into a temporary checkout outside the installation, then invokes the upgrade there. It removes that checkout on success, failure or a handled interruption. Local `bash deploy/upgrade.sh` uses the same workflow. The existing upgrade staging directory is also removed; retained backups stay under `/var/backups/namingo-reseller`.
+
+Review the incoming code first. The one-liner always downloads current `main` and installs its locked dependencies. To deploy an explicitly reviewed release/commit instead, use a separate checkout outside `/opt/namingo-reseller-api` and run `sudo bash deploy/upgrade.sh --from-checkout` there. This bypasses only the download wrapper; the existing layout checks, backup, migration and recovery behavior still apply. The upgrade installs required cron/font packages, preserves accounts and secrets, and does not automatically change PHP/extension versions. If those requirements change, install the relevant packages before upgrading.
 
 The script checks the standard local database/service layout, installs Composer
 dependencies and panel assets in a temporary directory, then briefly stops the API and

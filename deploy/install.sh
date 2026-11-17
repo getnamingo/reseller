@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fresh installation only. Run from a checked-out release: sudo bash deploy/install.sh
+# Fresh installation only. Downloads current main into a temporary checkout.
 # PHP snippets intentionally use single quotes so PHP, not the shell, expands variables.
 # shellcheck disable=SC2016
 set -Eeuo pipefail
@@ -255,4 +255,38 @@ SQL
     "$panel_host" "$api_host" "$admin_name" "$admin_uuid" "$APP_DIR"
 }
 
-if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi
+# Self-contained entry point: process substitution has no adjacent repository files.
+# Keep this parent alive so its EXIT trap removes the clone after the child finishes.
+bootstrap_require_root() { [[ $EUID -eq 0 ]] || fail 'Run this install as root.'; }
+
+bootstrap() (
+  if [[ ${1:-} == --help || ${1:-} == -h ]]; then
+    printf 'Usage: sudo bash deploy/install.sh\nDownloads current main into a temporary checkout, runs install, and removes the checkout.\n'
+    exit 0
+  fi
+  [[ $# == 0 ]] || fail 'Unknown argument. Use --help.'
+  bootstrap_require_root
+  if ! command -v git >/dev/null || [[ ! -s /etc/ssl/certs/ca-certificates.crt ]]; then
+    command -v apt-get >/dev/null || fail 'Install Git and CA certificates before running this script.'
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y git ca-certificates
+  fi
+  umask 077
+  bootstrap_dir=$(mktemp -d "${TMPDIR:-/tmp}/namingo-reseller-install.XXXXXX")
+  trap 'rm -rf -- "$bootstrap_dir"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  git clone --depth 1 --single-branch --branch main https://github.com/getnamingo/reseller.git "$bootstrap_dir/source"
+  [[ -f $bootstrap_dir/source/deploy/install.sh && -f $bootstrap_dir/source/composer.lock ]] \
+    || fail 'Downloaded repository is incomplete.'
+  bash "$bootstrap_dir/source/deploy/install.sh" --from-checkout
+)
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  if [[ ${1:-} == --from-checkout ]]; then
+    shift
+    main "$@"
+  else
+    bootstrap "$@"
+  fi
+fi

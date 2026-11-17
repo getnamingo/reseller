@@ -12,27 +12,23 @@ Registry credentials and job payloads are encrypted. Mutating commands use idemp
 
 ## Installation
 
-For a fresh **Ubuntu 26.04** or **Debian 13** server with Git installed, point separate API and panel hostnames at the server and allow inbound TCP 80/443, then run:
+For a fresh **Ubuntu 26.04** or **Debian 13** server with Wget installed, point separate API and panel hostnames at the server and allow inbound TCP 80/443, then run:
 
 ```bash
-git clone https://github.com/getnamingo/reseller.git
-cd reseller
-sudo bash deploy/install.sh
+sudo bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/getnamingo/reseller/main/deploy/install.sh)'
 ```
 
-The interactive installer configures PHP/Swoole/FPM, MariaDB, Caddy HTTPS, application secrets and the first administrator. It is for fresh installations only. See the [full installation guide](docs/install.md#ubuntu-2604-and-debian-13-installation) for requirements, manual setup and post-install configuration.
+The script clones current `main` into a temporary directory, runs the installer from that checkout, and removes it on completion or failure. Git and CA certificates are installed automatically if needed. The interactive installer configures PHP/Swoole/FPM, MariaDB, Caddy HTTPS, application secrets and the first administrator. It is for fresh installations only. See the [full installation guide](docs/install.md#ubuntu-2604-and-debian-13-installation) for requirements, manual setup and post-install configuration.
 
 ## Upgrade
 
-For an installer-created deployment, run from a separate checkout **outside** `/opt/namingo-reseller-api`:
+For an installer-created deployment, run:
 
 ```bash
-cd /path/to/reseller
-git pull --ff-only
-sudo bash deploy/upgrade.sh
+sudo bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/getnamingo/reseller/main/deploy/upgrade.sh)'
 ```
 
-Review the incoming code and schedule brief API/PHP-FPM downtime. The script preserves configuration, backs up code and database, and runs migrations. Read the [upgrade and recovery instructions](docs/install.md#upgrade-an-installer-created-demo) first; custom deployments should follow the [manual migration and ownership guidance](docs/install.md#object-ownership-and-upgrading-existing-installations).
+The script clones current `main` into a temporary directory and removes that checkout after the upgrade, including on failure. Review the incoming code and schedule brief API/PHP-FPM downtime. The script preserves configuration, backs up code and database, and runs migrations. Read the [upgrade and recovery instructions](docs/install.md#upgrade-an-installer-created-demo) first; custom deployments should follow the [manual migration and ownership guidance](docs/install.md#object-ownership-and-upgrading-existing-installations).
 
 ## Integrations
 
