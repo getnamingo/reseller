@@ -5,7 +5,7 @@ const source = fs.readFileSync(`${__dirname}/../panel/public/registry-ssl.js`, '
 const pair = {client_cert_pem: '-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----', client_key_pem: '-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----'};
 let checks = 0;
 function check(ok, message) { checks++; assert.ok(ok, message); }
-function page({debug = '0', response = pair} = {}) {
+function page({debug = '0', response = pair, action = null} = {}) {
     const events = {}, clicks = {}, calls = [];
     const fields = Object.fromEntries(['ca_pem', 'client_cert_pem', 'client_key_pem', 'client_key_passphrase', 'csrf'].map(name => [name, {value: name === 'csrf' ? 'csrf-token' : ''}]));
     const button = {disabled: false, innerHTML: 'Generate SSL', addEventListener: (type, fn) => { clicks[type] = fn; }};
@@ -14,7 +14,9 @@ function page({debug = '0', response = pair} = {}) {
     const status = {textContent: '', className: ''};
     const radio = {value: debug};
     const form = {
-        action: 'https://panel.example/admin/registries/registry-id',
+        // Named form controls shadow native form properties in browsers.
+        action: {value: 'registry.save', toString: () => '[object HTMLInputElement]'},
+        getAttribute: name => name === 'action' ? action : null,
         querySelector(selector) {
             if (selector === '[data-registry-ssl-generator]') return generator;
             if (selector === '[data-registry-ssl-status]') return status;
@@ -24,7 +26,7 @@ function page({debug = '0', response = pair} = {}) {
         },
         addEventListener: (type, fn) => { events[type] = fn; }
     };
-    const context = {URLSearchParams, document: {getElementById: () => form}, fetch: async (url, options) => {
+    const context = {URLSearchParams, location: {href: 'https://panel.example/admin/registries/registry-id'}, document: {getElementById: () => form}, fetch: async (url, options) => {
         calls.push({url, options});
         const data = typeof response === 'function' ? await response() : response;
         if (data instanceof Error) throw data;
@@ -43,6 +45,9 @@ function page({debug = '0', response = pair} = {}) {
     await p.click();
     check(p.calls.length === 1 && p.calls[0].options.method === 'POST', 'Generation uses one POST');
     check(p.calls[0].options.body.get('action') === 'registry.generate_ssl' && p.calls[0].options.body.get('csrf') === 'csrf-token', 'Dedicated generation action with CSRF');
+    check(p.calls[0].url === 'https://panel.example/admin/registries/registry-id', 'Posts to current registry URL despite hidden action input');
+    const explicitAction = page({debug: '1', action: '/admin/registries/other-registry'}); await explicitAction.click();
+    check(explicitAction.calls[0].url === '/admin/registries/other-registry', 'Explicit form action attribute respected despite hidden action input');
     check(p.calls[0].options.cache === 'no-store' && p.calls[0].options.credentials === 'same-origin', 'Authenticated noncached request');
     check(p.fields.client_cert_pem.value === pair.client_cert_pem && p.fields.client_key_pem.value === pair.client_key_pem, 'Both PEM fields filled');
     check(p.fields.ca_pem.value === '' && p.generator.hidden, 'CA unchanged and generator hidden after fill');
