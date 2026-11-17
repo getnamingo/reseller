@@ -67,6 +67,14 @@ final class Domains
                 foreach ($existing as $row) { self::advance($pdo, self::decode($row), $actor); }
                 return $key;
             }
+            if ($action === 'renew' && $domain !== null) {
+                $info = self::info(self::operations($pdo, $actor, null, $domain));
+                $limit = self::renewalLimit($info['exDate'] ?? null, null, $domain['profile']);
+                if ($limit === null) { throw new ApiException(422, 'expiry_unavailable', 'Sync the domain to retrieve its expiry date before renewing.'); }
+                if (DomainParams::years($input) > $limit) {
+                    throw new ApiException(422, 'renewal_limit', 'The selected term exceeds the available renewal period. Sync the domain and choose a shorter term.');
+                }
+            }
             if (str_starts_with($action, 'transfer-') && $domain !== null) {
                 Transfers::authorizeAction($pdo, $actor, $domain, $input, substr($action, 9));
             }
@@ -255,6 +263,23 @@ final class Domains
             }
         }
         return [];
+    }
+
+    /** Whole years that fit before the ten-year horizon; null means an unknown expiry. */
+    public static function renewalLimit(mixed $expiry, ?\DateTimeImmutable $now = null, string $profile = 'generic'): ?int
+    {
+        if (!is_string($expiry) || preg_match('/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?$/D', $expiry) !== 1) { return null; }
+        try {
+            $expires = new \DateTimeImmutable($expiry, new \DateTimeZone('UTC'));
+            if (\DateTimeImmutable::getLastErrors() !== false) { return null; }
+        } catch (\Exception) { return null; }
+        $horizon = ($now ?? new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->modify('+10 years');
+        $limit = 0;
+        for ($years = 1; $years <= ($profile === 'PT' ? 1 : 10); $years++) {
+            if ($expires->modify('+' . $years . ' years') > $horizon) { break; }
+            $limit = $years;
+        }
+        return $limit;
     }
 
     public static function listing(PDO $pdo, array $actor, int $page): array

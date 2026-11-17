@@ -146,6 +146,9 @@ try {
     $html=(string)request($detail)->getBody();
     check(str_contains($html,'2028-01-01') && str_contains($html,'name="authInfo"') && str_contains($html,'name="dnssec_action"'),'Details and edit cards rendered from registry info');
     check(!str_contains($html,'PrivateDomainSecret!123'),'Cached authorization code not rendered in browser');
+    $beforeRenew=value('SELECT COUNT(*) FROM epp_jobs');
+    check(request($detail,'POST',['action'=>'renew','key'=>Util::uuid(),'years'=>'10'])->getStatusCode()===422,'Forged renewal beyond the remaining lifetime is rejected');
+    check(value('SELECT COUNT(*) FROM epp_jobs')===$beforeRenew,'Over-limit panel renewal creates no job or wallet hold');
     check(request('/admin/domains')->getStatusCode()===403,'Admin route requires role zero');
     PanelSession::login(Auth::login($pdo,'reseller-b',$password,'127.0.0.1'));
     check(request($detail)->getStatusCode()===404 && request($detail.'?format=json')->getStatusCode()===404,'Foreign detail/polling hidden');

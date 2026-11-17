@@ -349,6 +349,8 @@ The domain tables show registered/expiry dates from the latest cached successful
 
 Open a domain to view synced creation/expiry/update dates, statuses and contact/nameserver data. Separate cards submit the existing API commands for contact/registrant changes, nameserver replacement, DNSSEC add/remove/replace, authorization code changes, statuses, renewal and deletion. Registrant changes use `domain.update_contact` with `contacttype=registrant`. A transfer/restore card accepts the native parameters for transfer follow-ups, restore and restore reports. Jobs and their native EPP codes/messages remain available; a successful HTTP submission is not proof of registry success.
 
+Renewal years are calculated from the synced expiry date: only whole-year additions that fit within ten calendar years from now are offered (with PT still limited to its implicit one-year term). The full date matters, not just the expiry year. At the limit the renewal form is unavailable; an unknown expiry requires Sync domain. New panel submissions enforce the same check before creating a job. Registry-side renewal rules remain authoritative for API requests and stale snapshots; no extra live EPP calls are added.
+
 Additional registry parameters accept a JSON object, using the same field names/types as the API (for example EE documents, IS card fields or an owned FRED `nsid`). The domain name and the structured form fields take precedence. See `GET /v1/commands`, the API guide and `src/ProfileParams.php` for profile contracts.
 
 Nameserver adapters follow the pinned Tembo version:

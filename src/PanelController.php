@@ -356,7 +356,7 @@ final class PanelController
             foreach ($info['contact'] ?? [] as $contact) {
                 if (is_array($contact) && isset($contact['type'], $contact['id'])) { $contacts[$contact['type']] = $contact['id']; }
             }
-            $data += ['domain' => $domain, 'info' => $info, 'contact_ids' => $contacts, 'hosts' => array_values($info['ns'] ?? []),
+            $data += ['renewal_limit' => Domains::renewalLimit($info['exDate'] ?? null, null, $domain['profile']), 'domain' => $domain, 'info' => $info, 'contact_ids' => $contacts, 'hosts' => array_values($info['ns'] ?? []),
                 'title' => 'Manage ' . $domain['object_name']];
             $data['title'] = 'Manage ' . $domain['object_name'];
             return $this->render($response, 'domain.twig', $data);
