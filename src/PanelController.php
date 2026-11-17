@@ -68,6 +68,21 @@ final class PanelController
                 PanelSession::clear();
                 return $this->redirect($response, '/login');
             }
+            if ($path === '/account/billing') {
+                if ($method === 'POST') {
+                    BillingProfile::saveCustomer($this->pdo, $this->user['id'], $input);
+                    Audit::record($this->pdo,$this->user['id'],'billing.profile_updated','reseller',$this->user['id'],$ip,[]);
+                    $_SESSION['flash'] = 'Billing details saved. Issued invoices retain their original details.';
+                    return $this->redirect($response, '/account/billing');
+                }
+                return $this->render($response, 'billing.twig', ['title'=>'Billing details',
+                    'account'=>PanelData::rows($this->pdo, 'SELECT * FROM resellers WHERE id = ?', [$this->user['id']])[0]]);
+            }
+            if (preg_match('#^(/admin)?/invoices(?:/([a-f0-9-]{36})(/pdf)?)?$#D', $path, $match)) {
+                $admin = ($match[1] ?? '') === '/admin';
+                if ($admin && (int)$this->user['role'] !== 0) { throw new ApiException(403, 'admin_required', 'Administrator access is required.'); }
+                return $this->invoices($request, $response, $admin, $match[2] ?? null, !empty($match[3]), $input, $ip);
+            }
             if (in_array($path, ['/transfers', '/admin/transfers'], true)) {
                 $admin = $path === '/admin/transfers';
                 if ($admin && (int) $this->user['role'] !== 0) { throw new ApiException(403, 'admin_required', 'Administrator access is required.'); }
@@ -110,7 +125,7 @@ final class PanelController
                     return $this->registryPage($response, $registry, $view, $this->page($request), $path);
                 }
                 if (preg_match('#^/admin/resellers/([a-f0-9-]{36})$#D', $path, $match)) {
-                    $accounts = PanelData::rows($this->pdo, 'SELECT id, username, display_name, company, email, phone, address, country_code, currency, status, role FROM resellers WHERE id = ?', [$match[1]]);
+                    $accounts = PanelData::rows($this->pdo, 'SELECT id, username, display_name, company, email, phone, address, country_code, company_number, vat_number, billing_email, billing_city, billing_postcode, invoice_tax_mode, invoice_vat_rate, invoice_tax_note, currency, status, role FROM resellers WHERE id = ?', [$match[1]]);
                     if ($accounts === []) { throw new ApiException(404, 'user_not_found', 'Reseller was not found.'); }
                     if ($method === 'POST') {
                         $action = $input['action'] ?? 'user.update';
@@ -226,6 +241,38 @@ final class PanelController
         }
     }
 
+
+    private function invoices(ServerRequestInterface $request, ResponseInterface $response, bool $admin, ?string $id, bool $pdf, array $input, string $ip): ResponseInterface
+    {
+        $response = $response->withHeader('Cache-Control','private, no-store');
+        $path = $admin ? '/admin/invoices' : '/invoices';
+        $actor = $admin ? $this->user : array_replace($this->user, ['role'=>1]);
+        $data = ['title'=>$admin ? 'Manage invoices' : 'Your invoices', 'section'=>$admin ? 'invoices' : null, 'path'=>$path];
+        if ($id === null) {
+            if ($request->getMethod() !== 'GET') { throw new ApiException(405, 'method_not_allowed', 'Use GET to list invoices.'); }
+            $page = $this->page($request);
+            return $this->render($response, 'invoices.twig', $data + Invoices::listing($this->pdo,$actor,$page) + ['page'=>$page,'paginate'=>true]);
+        }
+        $invoice = Invoices::get($this->pdo,$actor,$id);
+        if ($request->getMethod() === 'POST') {
+            if (!$admin || $pdf) { throw new ApiException(403, 'admin_required', 'Only administrators can send invoice emails.'); }
+            if (($input['action'] ?? '') !== 'retry-email' || ($input['confirmed'] ?? '') !== '1') { throw new ApiException(422, 'confirmation_required', 'Confirm delivery was checked before emailing again.'); }
+            $sent = InvoiceMailer::deliver($this->pdo,$id,new InvoiceStorage(),true);
+            Audit::record($this->pdo,$actor['id'],'invoice.email_requested','invoice',$id,$ip,[]);
+            $_SESSION['flash'] = $sent ? 'Invoice email sent.' : 'Invoice was already sent or is currently being processed.';
+            return $this->redirect($response,$path.'/'.$id);
+        }
+        if ($pdf) {
+            if ($invoice['status'] !== 'issued') { throw new ApiException(409, 'invoice_preparing', 'The invoice PDF is still being generated.'); }
+            $bytes = (new InvoiceStorage())->read($invoice);
+            $response->getBody()->write($bytes);
+            return $response->withHeader('Content-Type','application/pdf')->withHeader('Cache-Control','private, no-store')
+                ->withHeader('Pragma','no-cache')->withHeader('X-Content-Type-Options','nosniff')
+                ->withHeader('Content-Security-Policy',"default-src 'none'; frame-ancestors 'self'")
+                ->withHeader('Content-Disposition',(($request->getQueryParams()['download'] ?? '') === '1' ? 'attachment' : 'inline').'; filename="'.$invoice['invoice_number'].'.pdf"');
+        }
+        return $this->render($response->withHeader('Cache-Control','private, no-store'), 'invoice.twig', $data + ['record'=>$invoice,'invoice'=>Invoices::decode($invoice)]);
+    }
 
     private function transfers(ServerRequestInterface $request, ResponseInterface $response, bool $admin, array $input, string $ip): ResponseInterface
     {
@@ -452,7 +499,7 @@ final class PanelController
                     'statuses' => ['queued', 'processing', 'succeeded', 'rejected', 'unknown', 'pending']]);
             case '/account':
                 return $this->render($response, 'account.twig', $data + ['title' => 'Account',
-                    'account' => PanelData::rows($this->pdo, 'SELECT id, username, display_name, company, email, phone, address, country_code, role, status, currency, created_at FROM resellers WHERE id = ?', [$id])[0] ?? [],
+                    'account' => PanelData::rows($this->pdo, 'SELECT id, username, display_name, company, email, phone, address, country_code, company_number, vat_number, billing_email, billing_city, billing_postcode, invoice_tax_mode, invoice_vat_rate, invoice_tax_note, role, status, currency, created_at FROM resellers WHERE id = ?', [$id])[0] ?? [],
                     'access' => PanelData::access($this->pdo, $id),
                     'access_columns' => ['registry' => 'Registry', 'registry_id' => 'UUID', 'profile' => 'Profile', 'registry_enabled' => 'Registry enabled', 'access_enabled' => 'Access enabled',
                         'tld' => 'TLD', 'tld_enabled' => 'TLD enabled', 'permitted' => 'TLD permitted']]);

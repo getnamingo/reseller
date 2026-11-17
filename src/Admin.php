@@ -45,7 +45,7 @@ final class Admin
         // Ledger methods own their transactions and preserve the CLI's reconciliation rules.
         if ($action === 'user.update') {
             $target = $id('reseller_id');
-            $changes = array_intersect_key($input, array_flip(['username', 'display_name', 'company', 'email', 'phone', 'address', 'country_code']));
+            $changes = array_intersect_key($input, array_flip(array_merge(['username', 'display_name', 'company', 'email', 'phone', 'address', 'country_code'], array_keys(BillingProfile::LIMITS))));
             self::updateAccount($pdo, $target, $changes);
         } elseif ($action === 'tld.delete') {
             $target = $id('registry_id');
@@ -299,27 +299,37 @@ final class Admin
     /** Shared panel/CLI account edit. UUID, credentials and wallet currency stay independent. */
     public static function updateAccount(PDO $pdo, string $id, array $changes): void
     {
-        $limits = ['username' => 64, 'display_name' => 255, 'company' => 255, 'email' => 254, 'phone' => 32, 'address' => 2000, 'country_code' => 2];
+        $limits = ['username' => 64, 'display_name' => 255, 'company' => 255, 'email' => 254, 'phone' => 32, 'address' => 2000, 'country_code' => 2] + BillingProfile::LIMITS;
         if ($changes === [] || array_diff_key($changes, $limits) !== []) {
-            throw new ApiException(422, 'invalid_account_fields', 'Edit username, display_name, company, email, phone, address or country_code. Currency and credentials use their existing controls.');
+            throw new ApiException(422, 'invalid_account_fields', 'Edit account or company billing fields. Currency and credentials use their existing controls.');
         }
         foreach ($changes as $field => &$value) {
             if (!is_string($value) || !mb_check_encoding($value, 'UTF-8')) { throw new ApiException(422, 'invalid_account', 'Account fields must be UTF-8 strings.'); }
             $value = trim($value);
             if ($field === 'country_code') { $value = strtoupper($value); }
-            if (mb_strlen($value) > $limits[$field] || preg_match($field === 'address' ? '/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u' : '/[\x00-\x1F\x7F]/u', $value)
+            if (mb_strlen($value) > $limits[$field] || preg_match(in_array($field, ['address','invoice_tax_note'], true) ? '/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u' : '/[\x00-\x1F\x7F]/u', $value)
                 || $field === 'username' && preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$/D', $value) !== 1
-                || $field === 'email' && $value !== '' && filter_var($value, FILTER_VALIDATE_EMAIL) === false
+                || in_array($field, ['email','billing_email'], true) && $value !== '' && filter_var($value, FILTER_VALIDATE_EMAIL) === false
                 || $field === 'country_code' && $value !== '' && preg_match('/^[A-Z]{2}$/D', $value) !== 1) {
                 throw new ApiException(422, 'invalid_account', "Invalid account field: {$field}.");
             }
         }
         unset($value);
+        if (isset($changes['invoice_tax_mode']) && !in_array($changes['invoice_tax_mode'], ['unconfigured','standard','reverse_charge','exempt'], true)
+            || isset($changes['invoice_vat_rate']) && (preg_match('/^(?:[0-9]|[1-9][0-9])(?:\.[0-9]{1,2})?$/D', $changes['invoice_vat_rate']) !== 1)) {
+            throw new ApiException(422, 'invalid_tax_policy', 'Choose a valid tax treatment and VAT rate from 0 to 99.99.');
+        }
         $pdo->beginTransaction();
         try {
-            $old = $pdo->prepare('SELECT username FROM resellers WHERE id = ? FOR UPDATE'); $old->execute([$id]);
-            $username = $old->fetchColumn();
+            $old = $pdo->prepare('SELECT * FROM resellers WHERE id = ? FOR UPDATE'); $old->execute([$id]);
+            $previous = $old->fetch();
+            $username = $previous === false ? false : $previous['username'];
             if ($username === false) { throw new ApiException(404, 'user_not_found', 'Reseller was not found.'); }
+            if (!isset($changes['invoice_tax_mode'])) {
+                foreach (['company','company_number','vat_number','country_code'] as $field) {
+                    if (isset($changes[$field]) && $changes[$field] !== $previous[$field]) { $changes['invoice_tax_mode'] = 'unconfigured'; break; }
+                }
+            }
             $sets = implode(', ', array_map(static fn ($field) => "{$field} = ?", array_keys($changes)));
             $pdo->prepare("UPDATE resellers SET {$sets} WHERE id = ?")->execute([...array_values($changes), $id]);
             if (isset($changes['username']) && $changes['username'] !== $username) {

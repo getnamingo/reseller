@@ -1,8 +1,9 @@
 {% extends 'layouts/app.twig' %}
 {% import 'partials/table.twig' as tables %}
 {% block content %}
+<p><a class="btn btn-primary" href="/account/billing">Edit billing details</a></p>
 <div class="card mb-4"><div class="card-header"><h2 class="card-title">Account details</h2></div><div class="card-body"><div class="datagrid">
-{% for key, label in {'id':'Reseller UUID', 'username':'Username', 'display_name':'Name', 'company':'Company', 'email':'Email', 'phone':'Phone', 'address':'Address', 'country_code':'Country', 'role':'Role', 'status':'Status', 'currency':'Currency', 'created_at':'Created'} %}
+{% for key, label in {'id':'Reseller UUID', 'username':'Username', 'display_name':'Name', 'company':'Company', 'email':'Email', 'phone':'Phone', 'address':'Address', 'country_code':'Country', 'company_number':'Company registration', 'vat_number':'VAT ID', 'billing_email':'Invoice email', 'billing_city':'City', 'billing_postcode':'Postal code', 'invoice_tax_mode':'VAT treatment', 'invoice_vat_rate':'VAT rate', 'role':'Role', 'status':'Status', 'currency':'Currency', 'created_at':'Created'} %}
 <div class="datagrid-item"><div class="datagrid-title">{{ label }}</div><div class="datagrid-content text-break{% if key == 'id' %} uuid{% endif %}">
 {% set value = attribute(account, key) %}
 {% if key == 'role' %}{{ value == 0 ? 'Administrator' : 'Reseller' }}{% elseif key == 'status' %}<span class="badge {{ value == 'active' ? 'bg-green-lt' : 'bg-secondary-lt' }}">{{ value }}</span>{% elseif key == 'address' %}{{ value is not null and value != '' ? value|nl2br : '—' }}{% else %}{{ value is not null and value != '' ? value : '—' }}{% endif %}

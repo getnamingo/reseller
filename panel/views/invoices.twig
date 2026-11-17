@@ -1,0 +1,8 @@
+{% extends 'layouts/app.twig' %}
+{% block content %}
+<div class="card"><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>Invoice</th>{% if section %}<th>Reseller</th>{% endif %}<th>Service month</th><th>Issued</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+{% for row in rows %}<tr><td class="fw-semibold">{{ row.invoice_number }}</td>{% if section %}<td>{{ row.username }}</td>{% endif %}<td>{{ row.period_start|slice(0,7) }}</td><td>{{ row.issued_at|slice(0,10) }}</td><td>{{ row.total }} {{ row.currency }}</td><td><span class="badge {{ row.status == 'issued' ? 'bg-green-lt' : 'bg-blue-lt' }}">{{ row.status }}</span>{% if section %}<div class="small text-secondary">Email: {{ row.email_status }}</div>{% endif %}</td><td><div class="btn-list flex-nowrap"><a class="btn btn-sm" href="{{ path }}/{{ row.id }}">View</a>{% if row.status == 'issued' %}<a class="btn btn-sm btn-outline-primary" href="{{ path }}/{{ row.id }}/pdf?download=1">Download PDF</a>{% endif %}</div></td></tr>
+{% else %}<tr><td colspan="{{ section ? 7 : 6 }}" class="text-center text-secondary py-4">No invoices yet. Monthly invoices appear after they have been generated.</td></tr>{% endfor %}
+</tbody></table></div></div>{% include 'partials/pagination.twig' %}
+{% if not section %}<p class="text-secondary mt-3">Keep your <a href="/account/billing">company billing details</a> up to date. Issued invoices retain the details recorded when they were created.</p>{% endif %}
+{% endblock %}

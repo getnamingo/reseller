@@ -40,6 +40,7 @@ if [[ ${1:-} == scenario ]]; then
   }
   chown() { :; }
   setfacl() { :; }
+  setup_invoicing() { printf 'invoicing setup\n' >>"$work/log"; }
   check_ready() {
     printf 'ready\n' >>"$work/log"
     [[ $scenario != ready-failure ]]
@@ -85,6 +86,7 @@ for scenario in success migrate-failure ready-failure dump-failure; do
     check test ! -e "$dir/app/old-code"
     check test "$(gzip -dc "$dir/backup/database.sql.gz")" = 'database snapshot'
     check grep -q '^db .*REVOKE CREATE' "$dir/log"
+    check grep -q '^invoicing setup$' "$dir/log"
     # Privileges must be revoked before any restart.
     if [[ $scenario == migrate-failure ]]; then
       if grep -q '^service start' "$dir/log"; then echo 'Services restarted after failed migration' >&2; exit 1; fi

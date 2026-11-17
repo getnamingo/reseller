@@ -370,3 +370,53 @@ Use `https://` for the health check when direct API TLS is enabled.
 - MariaDB advisory locks serialize a registry across multiple API processes or hosts. Swoole rate limits are per API instance; database login lockout remains global.
 - Before changing the pinned EPP commit, compare its factory profiles and every method in `src/Registries`, test in each registry OTE, then update the pin.
 - Run `composer audit`, keep Ubuntu/MariaDB/PHP patched, and exercise restores and unknown-job reconciliation before production launch.
+
+## Monthly invoicing
+
+The installer and `deploy/upgrade.sh` install `cron`, DejaVu fonts and a monthly entry at `/etc/cron.d/namingo-reseller-invoicing`. It runs `bin/invoicing.php` as `namingo-api` at **04:15 on the second day of each month, in the server's timezone**. Using the second day ensures the previous UTC calendar month has closed in every server timezone. `flock` prevents overlapping installed cron runs; per-account database locks and unique monthly invoice keys also protect manual reruns. Logs go to `/var/log/namingo-invoicing.log` with monthly rotation.
+
+Invoicing starts disabled. Before enabling it:
+
+1. Run `composer install --no-dev --classmap-authoritative` and `php bin/manage.php migrate`. Migration `009_invoicing.php` adds company billing/VAT fields without replacing existing account details, then creates the invoice index and number sequences. It can resume after partially completed DDL.
+2. Set the `INVOICE_SELLER_*` fields in `.env`: registered legal name, company registration number, registered street address/city/postcode/country, billing email, VAT ID where applicable, and national VAT reporting currency. Use two-letter uppercase country codes and three-letter currency codes. Keep these details accurate before the first invoice is issued.
+3. Complete each reseller's billing details in **Administration → Resellers → account**: registered company name and number, street address, city, postal code, country, invoice email, and VAT ID if registered. Administrators select `standard`, `reverse_charge`, or `exempt`, the VAT percentage, and the tax basis note. The default `unconfigured` blocks issuance. Standard VAT requires the supplier VAT ID; a zero standard rate requires a tax-basis note. Reverse charge requires both VAT IDs and a legal-basis note; exemption requires a note and zero rate. Validate tax treatment and registration status outside the application. No VAT/VIES decision is inferred merely from entering a number. A reseller can update its own details at `/account/billing`; legal identity/country/VAT changes reset its tax treatment for administrator review.
+4. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY=tls` (STARTTLS) or `smtps`, and optional `SMTP_USERNAME`/`SMTP_PASSWORD`. TLS certificate verification remains enabled. `none` is allowed only for a loopback mail relay. Email comes from the invoice's snapshotted issuer email. Set `INVOICING_ENABLED=1` after configuration is complete. An incomplete reseller is reported and skipped without blocking other accounts.
+
+Monthly invoices cover **completed ledger service charges**, using each charge's UTC posting date. Wallet top-ups, temporary holds/releases and manual adjustments are excluded; deposits are not invoiced a second time. Suspended resellers are included, and a reseller that existed during the period but had no charges gets a zero-activity invoice. Administrators do not receive reseller invoices merely because they have an account. Late-settled operations appear in the month their charge posts. This is a service-consumption invoice workflow, not an advance-payment/credit-note workflow; advance invoices, refunds and statutory structured e-invoice submissions remain outside this feature.
+
+Existing ledger charges are treated as **VAT-inclusive, already paid**. Invoicing never adds a new wallet debit or retroactively increases a price. Decimal arithmetic splits the charged total into net and VAT, preserving the ledger's four-decimal precision. One approved tax treatment applies per reseller and invoice period. Configure accounting/tax policy accordingly before enabling automation; the application does not infer historical tax changes or country-specific obligations. The invoice includes issuer/customer details, sequential number, issue/service dates, quantities, net unit prices, VAT breakdown and the applicable tax note. Reference: [European Commission VAT invoice information](https://taxation-customs.ec.europa.eu/taxation/vat/vat-businesses/invoicing_en).
+
+For nonzero VAT in a currency different from `INVOICE_SELLER_TAX_CURRENCY`, configure a month-specific conversion rate, as decimal **strings**. Example: if EUR is the tax currency, this means 1 USD = 0.92 EUR for October 2026:
+
+```dotenv
+INVOICE_TAX_FX_RATES='{"2026-10":{"USD":"0.92"}}'
+```
+
+The selected rate and national-currency VAT amount are frozen on the invoice. A missing conversion blocks that invoice. Set an appropriate accounting rate before generation; the application does not fetch exchange rates.
+
+Manual runs are safe to repeat:
+
+```bash
+# Default: generate the previous completed UTC month and send definitely unsent emails.
+sudo -u namingo-api php8.5 /opt/namingo-reseller-api/bin/invoicing.php
+# Backfill/recover a particular month. This creates real numbered invoices but sends no email.
+sudo -u namingo-api php8.5 /opt/namingo-reseller-api/bin/invoicing.php --month=2026-10 --no-email
+```
+
+Numbers and billing snapshots are reserved atomically. An interrupted PDF build resumes the same invoice; issued invoices retain their original details and amount even after a profile change. Email uses PHPMailer with the PDF attached and a stable Message-ID. Sent invoices are not automatically emailed again. A send interrupted around SMTP acceptance is marked `sending`/`unknown`; check recipient/mail-server delivery and use the confirmed admin **Send invoice email** action if retry is necessary. SMTP cannot provide exactly-once delivery across a crash. Routine runs also retry up to 100 definitely unsent older issued invoices. Failed generation is reported by a nonzero exit code; rerun the affected month after correcting configuration or an interruption.
+
+PDFs use `dragonofmercy/phppdf`, with embedded Unicode DejaVu fonts and multipage line tables. `INVOICE_FONT_REGULAR` and `INVOICE_FONT_BOLD` can point to other installed, compatible TTF fonts. No plaintext PDF is written to disk: the bytes are encrypted with XChaCha20-Poly1305 and an invoice-specific authenticated context before Utopia's local storage writes them atomically.
+
+The single private file location is **`DATA_DIRECTORY/invoices`**, default `/var/lib/namingo-api/data/invoices`, outside `panel/public` and outside the application checkout. The installer creates directories mode `0750` owned by `namingo-api:namingo-api`; files are `0640`. PHP-FPM's `namingo-panel` user reads through the shared group. Caddy has no direct access. Invoice snapshots are also encrypted in MariaDB; the database stores invoice identifiers, totals, statuses and integrity hashes alongside them. HTTP PDF/view access requires a current panel session; resellers see only their own records and administrators can use `/admin/invoices` for all accounts. Paths are generated from invoice UUIDs, not request filenames, and responses are private/non-cacheable.
+
+Back up **MariaDB, the private data directory and `APP_MASTER_KEY`**. Preserve the key securely and separately: losing it makes both snapshots and PDFs unreadable. The standard upgrade now also saves the default private data directory to `data.tar.gz`, and never rsyncs/deletes it with application source. A custom `DATA_DIRECTORY` must be provisioned with equivalent ownership/permissions and backed up separately. Do not put it under a web root, use a symlink, or allow group/other writes. Retention is deliberate: this feature does not delete issued invoices or rewrite them as corrections.
+
+For a manual installation, install the schedule after provisioning the standard paths above:
+
+```bash
+sudo install -o root -g root -m 0644 deploy/namingo-reseller-invoicing.cron /etc/cron.d/namingo-reseller-invoicing
+sudo install -o root -g root -m 0644 deploy/namingo-reseller-invoicing.logrotate /etc/logrotate.d/namingo-reseller-invoicing
+sudo systemctl enable --now cron
+```
+
+Run `php tests/invoices.php` against a disposable MariaDB database with the existing `TEST_MYSQL_*` settings. Tests generate real PDF bytes and MIME messages, simulate SMTP success/failure, verify encrypted file integrity and account isolation, exercise period/VAT arithmetic and migration recovery, and never contact a real recipient.

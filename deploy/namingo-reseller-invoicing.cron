@@ -1,0 +1,4 @@
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Second day avoids starting before the UTC month has closed in any server timezone.
+15 4 2 * * namingo-api /usr/bin/flock -n /var/lib/namingo-api/data/invoicing.lock /usr/bin/php8.5 /opt/namingo-reseller-api/bin/invoicing.php >> /var/log/namingo-invoicing.log 2>&1
