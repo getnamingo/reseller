@@ -186,8 +186,8 @@ Advanced fields default to prefix `api`, timeout 30 seconds, TLS 1.3 (TLS 1.2 is
 
 The TLD page lists that registry's suffixes with colored enable/disable buttons, an Add
 TLD modal and the existing guarded unused-TLD removal controls. The TLD permissions page
-has a **Permit a TLD** modal, a scoped paginated table, colored enable/disable buttons and
-permission-removal controls. Toggles retain the current page. Registry UUIDs come from
+has a **Permit a TLD** modal that selects only resellers already assigned to the registry, a scoped paginated table, colored enable/disable buttons and
+permission-removal controls. Grant the reseller access first on **Edit registry → Reseller access**. An empty selector links there, and missing registry/TLD prerequisites return actionable validation messages rather than generic database conflicts. TLD assignment never creates or re-enables registry-level access. Toggles retain the current page. Registry UUIDs come from
 the URL on these pages and cannot be redirected by submitted form values.
 
 The standalone TLDs navigation/page is removed; `/admin/tlds` redirects to Registries.

@@ -571,7 +571,9 @@ final class PanelController
             'section' => 'registries', 'registry' => $registry, 'view' => $view, 'page' => $page, 'path' => $path, 'paginate' => true,
             'rows' => PanelData::rows($this->pdo, $sql . " LIMIT 51 OFFSET {$offset}", [$id]),
             'profiles' => CommandCatalog::profiles(),
-            'resellers' => PanelData::rows($this->pdo, 'SELECT id, username FROM resellers ORDER BY username LIMIT 500'),
+            'resellers' => $view === 'permissions'
+                ? PanelData::rows($this->pdo, 'SELECT u.id, u.username, rr.enabled FROM resellers u JOIN reseller_registries rr ON rr.reseller_id = u.id WHERE rr.registry_id = ? ORDER BY u.username', [$id])
+                : PanelData::rows($this->pdo, 'SELECT id, username FROM resellers ORDER BY username LIMIT 500'),
             'tlds' => PanelData::rows($this->pdo, 'SELECT tld FROM registry_tlds WHERE registry_id = ? ORDER BY tld', [$id])];
         if ($view === 'edit') {
             $data['registry_form'] = RegistryForm::fields($this->registryConfig($id));
