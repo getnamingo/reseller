@@ -148,17 +148,27 @@ main() {
 }
 
 # Self-contained entry point: process substitution has no adjacent repository files.
-# Keep this parent alive so its EXIT trap removes the clone after the child finishes.
+# Keep this parent alive so its EXIT trap removes temporary source after the child finishes.
 bootstrap_require_root() { [[ $EUID -eq 0 ]] || fail 'Run this upgrade as root.'; }
 
 bootstrap() (
   if [[ ${1:-} == --help || ${1:-} == -h ]]; then
-    printf 'Usage: sudo bash deploy/upgrade.sh\nDownloads current main into a temporary checkout, runs upgrade, and removes the checkout.\n'
+    printf 'Usage: sudo bash deploy/upgrade.sh [local]\nDownloads current main, or uses reseller-main.zip beside this script with local. Temporary source is removed afterward.\n'
     exit 0
   fi
-  [[ $# == 0 ]] || fail 'Unknown argument. Use --help.'
+  [[ $# == 0 || ( $# == 1 && ${1:-} == local ) ]] || fail 'Unknown argument. Use --help.'
   bootstrap_require_root
-  if ! command -v git >/dev/null || [[ ! -s /etc/ssl/certs/ca-certificates.crt ]]; then
+  if [[ ${1:-} == local ]]; then
+    [[ -f ${BASH_SOURCE[0]} ]] || fail 'Local mode requires a saved script file beside reseller-main.zip.'
+    archive_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+    archive=$archive_dir/reseller-main.zip
+    [[ -f $archive ]] || fail "Local archive not found: $archive"
+    if ! command -v unzip >/dev/null; then
+      command -v apt-get >/dev/null || fail 'Install Unzip before using local mode.'
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y unzip
+    fi
+  elif ! command -v git >/dev/null || [[ ! -s /etc/ssl/certs/ca-certificates.crt ]]; then
     command -v apt-get >/dev/null || fail 'Install Git and CA certificates before running this script.'
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y git ca-certificates
@@ -168,10 +178,16 @@ bootstrap() (
   trap 'rm -rf -- "$bootstrap_dir"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  git clone --depth 1 --single-branch --branch main https://github.com/getnamingo/reseller.git "$bootstrap_dir/source"
-  [[ -f $bootstrap_dir/source/deploy/upgrade.sh && -f $bootstrap_dir/source/composer.lock ]] \
-    || fail 'Downloaded repository is incomplete.'
-  bash "$bootstrap_dir/source/deploy/upgrade.sh" --from-checkout
+  if [[ ${1:-} == local ]]; then
+    unzip -q "$archive" -d "$bootstrap_dir"
+    checkout=$bootstrap_dir/reseller-main
+  else
+    git clone --depth 1 --single-branch --branch main https://github.com/getnamingo/reseller.git "$bootstrap_dir/source"
+    checkout=$bootstrap_dir/source
+  fi
+  [[ -f $checkout/deploy/upgrade.sh && -f $checkout/composer.lock ]] \
+    || fail 'Source is incomplete; local ZIPs must contain reseller-main/deploy/upgrade.sh and reseller-main/composer.lock.'
+  bash "$checkout/deploy/upgrade.sh" --from-checkout
 )
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then

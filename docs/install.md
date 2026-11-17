@@ -80,6 +80,17 @@ bash tests/bootstrap.sh # mocked download/cleanup and child-failure scenarios
 CADDY_BIN=/usr/bin/caddy FPM_BIN=/usr/sbin/php-fpm8.5 bash tests/install.sh
 ```
 
+### Install or upgrade from a local ZIP
+
+Put GitHub's `reseller-main.zip` beside the saved `install.sh` or `upgrade.sh`. The ZIP must contain the `reseller-main/` directory with the repository files beneath it:
+
+```bash
+sudo bash /path/to/install.sh local
+sudo bash /path/to/upgrade.sh local
+```
+
+The archive is resolved beside the **script**, regardless of your current working directory. Local mode skips Git cloning, installs Unzip if necessary, extracts into a private temporary directory and runs the matching deploy script from `reseller-main/deploy/`. Missing, invalid or incomplete ZIPs fail before installation/upgrade starts. Temporary extracted files are removed afterward, including on failure; the original ZIP is kept. Package and Composer downloads still need their usual network access. Local mode requires a saved script, rather than the remote process-substitution one-liner.
+
 ### Manual installation alternative
 
 The following is the manual setup reference; the automatic installer already performs
