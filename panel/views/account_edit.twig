@@ -5,8 +5,8 @@
 <p class="text-secondary">Reseller UUID: <span class="uuid">{{ account.id }}</span>. Status: {{ account.status }}. Role: {{ account.role }}. Wallet currency: {{ account.currency }}.</p>
 <h2 class="card-title">Account details</h2>
 <form method="post">{{ forms.hidden('user.update', csrf) }}
-{% for field, label in {'username':'API / panel username', 'display_name':'Contact name', 'company':'Company', 'email':'Contact email', 'phone':'Phone', 'country_code':'Country code (two letters)'} %}
-<label class="form-label mb-3">{{ label }}<input class="form-control" name="{{ field }}" value="{{ attribute(account, field) }}" type="{{ field == 'email' ? 'email' : 'text' }}" maxlength="{{ field == 'username' ? 64 : (field == 'phone' ? 32 : (field == 'country_code' ? 2 : (field == 'email' ? 254 : 255))) }}"{% if field == 'username' %} required minlength="3" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{2,63}"{% endif %}></label>
+{% for field, label in {'username':'API / panel username', 'display_name':'Contact name', 'company':'Company', 'email':'Contact email', 'phone':'Phone', 'country_code':'Country'} %}
+<label class="form-label mb-3">{{ label }}{% if field == 'country_code' %}{% include 'partials/country_select.twig' with {countries: countries, country_name: field, country_value: account.country_code} only %}{% else %}<input class="form-control" name="{{ field }}" value="{{ attribute(account, field) }}" type="{{ field == 'email' ? 'email' : 'text' }}" maxlength="{{ field == 'username' ? 64 : (field == 'phone' ? 32 : (field == 'country_code' ? 2 : (field == 'email' ? 254 : 255))) }}"{% if field == 'username' %} required minlength="3" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{2,63}"{% endif %}>{% endif %}</label>
 {% endfor %}
 <label class="form-label mb-3">Postal address<textarea class="form-control" name="address" maxlength="2000" rows="4">{{ account.address }}</textarea></label>
 <h3 class="mt-4">Company invoicing details</h3>

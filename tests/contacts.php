@@ -66,9 +66,10 @@ try {
     PanelSession::login(Auth::login($pdo, 'reseller-a', $password, '127.0.0.1'));
     $list = html('/contacts');
     check(str_contains($list, 'data-bs-target="#add-contact"') && str_contains($list, 'modal-dialog-scrollable'), 'Header add-contact modal');
+    check(str_contains($list,'<select class="form-select" name="fields[country]"') && str_contains($list,'Bulgaria (BG)') && !str_contains($list,'<input id="contact-country"'),'Reseller contact create uses country names with ISO code option values');
     check(substr_count($list, 'name="extra_key[') === 5 && substr_count($list, 'name="extra_value[') === 5, 'Exactly five two-input extra rows');
     check(str_contains($list, 'name="fields[euType]"') && str_contains($list, 'name="fields[ident_pdf]"'), 'All pinned profile-required contact options exposed');
-    check(str_contains($list, 'href="/domains">Domains') && !str_contains($list, '>Objects</a>'), 'Objects menu renamed Domains');
+    check(preg_match('~href="/domains">\s*Domains~', $list) === 1 && !str_contains($list, '>Objects</a>'), 'Objects menu renamed Domains');
     $hidden = Util::uuid(); [$nonce, $cipher] = Crypto::encrypt('{}', 'registry-config:' . $hidden);
     $pdo->prepare("INSERT INTO registries (id, name, profile, config_nonce, config_cipher) VALUES (?, 'Hidden registry name', 'generic', ?, ?)")->execute([$hidden, $nonce, $cipher]);
     $forged = request('/contacts', 'POST', input([$hidden]));
@@ -80,6 +81,7 @@ try {
     check($response->getStatusCode() === 303, 'Contact create accepted: ' . (string) $response->getBody());
     $row = Contacts::get($pdo, $id, $actor);
     check(count($row['registries']) === 2, 'One contact with two registry mappings');
+    check(str_contains(html('/contacts/'.$id),'<option value="BG" selected>Bulgaria (BG)</option>'),'Reseller contact edit selects saved country');
     check(value('SELECT reseller_id FROM panel_contacts WHERE id = ?', [$id]) === $a, 'Contact belongs to authenticated reseller');
     check(request('/contacts/' . $id . '?format=json')->getStatusCode() === 200 && str_contains(html('/contacts/' . $id), '/contacts.js'), 'Queued contact operations expose polling without new submissions');
     check(!str_contains(value('SELECT data_cipher FROM panel_contacts WHERE id = ?', [$id]), 'ContactSecret') && !str_contains(value('SELECT registries FROM panel_contacts WHERE id = ?', [$id]), 'private@example.test'), 'Contact PII and auth code encrypted; mapping JSON has no contact payload');
@@ -87,6 +89,7 @@ try {
         $job = value('SELECT request_cipher FROM epp_jobs WHERE id = ?', [$link['job_uuid']]); check($job !== false, 'Registry job recorded');
         $stmt = $pdo->prepare('SELECT * FROM epp_jobs WHERE id = ?'); $stmt->execute([$link['job_uuid']]); $native = Ownership::params($stmt->fetch());
         check($native['nin'] === '123456', 'Extra nin parameter passed to native EPP request');
+        check($native['country']==='BG','Country selection is sent to contact.create as a two-letter code');
         finish($link['job_uuid'], ['id' => $native['id'], 'code' => 1000, 'msg' => 'Contact created']);
     }
     $row = Contacts::get($pdo, $id, $actor);
@@ -115,6 +118,7 @@ try {
     check($row['data']['extra']['nin'] === '654321', 'Sync updates matching custom parameter');
     check($row['registries'][$r2]['contact_id'] === $in['fields']['id'], 'Sync leaves other registry identity unchanged');
     $edit = html('/admin/contacts/' . $id);
+    check(str_contains($edit,'<option value="BG" selected>Bulgaria (BG)</option>') && str_contains(html('/admin/contacts'),'name="fields[country]"'),'Admin contact create and edit use the same selected country dropdown');
     check(str_contains($edit, 'value="synced@example.test"') && str_contains($edit, 'Sync contact'), 'Edit shares prefilled form plus sync card');
     request('/admin/contacts/' . $id, 'POST', ['action' => 'sync', 'key' => Util::uuid(), 'registry_id' => $r1]);
     $mismatched = Contacts::get($pdo, $id, $admin);
@@ -122,9 +126,11 @@ try {
     $row = Contacts::get($pdo, $id, $admin);
     check($row['data']['fields']['email'] === 'synced@example.test' && $row['registries'][$r1]['status'] === 'rejected', 'Mismatched contact-info identity cannot replace local contact data');
     $update = $in; $update['key'] = Util::uuid(); $update['version'] = $row['version']; $update['fields'] = $row['data']['fields']; $update['extra_value'][0] = '654321';
+    $update['fields']['country']='DE';
     check(request('/admin/contacts/' . $id, 'POST', $update)->getStatusCode() === 303, 'Admin updates both registry links');
+    check(Contacts::get($pdo,$id,$admin)['data']['fields']['country']==='DE','Contact update persists selected country code');
     $row = Contacts::get($pdo, $id, $admin);
-    foreach ($row['registries'] as $reg => $link) { check(value('SELECT command FROM epp_jobs WHERE id = ?', [$link['job_uuid']]) === 'contact.update', 'Update uses correct native operation'); finish($link['job_uuid'], ['code' => 1000, 'msg' => 'Updated']); }
+    foreach ($row['registries'] as $reg => $link) { check(value('SELECT command FROM epp_jobs WHERE id = ?', [$link['job_uuid']]) === 'contact.update', 'Update uses correct native operation'); $query=$pdo->prepare('SELECT * FROM epp_jobs WHERE id=?'); $query->execute([$link['job_uuid']]); check(Ownership::params($query->fetch())['country']==='DE','Contact update sends selected ISO code'); finish($link['job_uuid'], ['code' => 1000, 'msg' => 'Updated']); }
     $row = Contacts::get($pdo, $id, $admin);
     check(request('/admin/contacts/' . $id, 'POST', $update)->getStatusCode() === 409, 'Stale form version cannot overwrite changed contact');
     check(request('/admin/contacts/' . $id, 'POST', ['action' => 'delete', 'key' => Util::uuid()])->getStatusCode() === 303, 'Delete submitted to registry rather than prechecking associations');

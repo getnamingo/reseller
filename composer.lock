@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "4817587008cf9147e649867cd4357d95",
+    "content-hash": "afc7c026aecab7927246d8d09cd859e4",
     "packages": [
         {
             "name": "argora/tabler-assets",
@@ -665,6 +665,74 @@
             ],
             "time": "2026-11-12T15:57:42+00:00",
             "published-time": "2026-11-12T15:58:42+00:00"
+        },
+        {
+            "name": "league/iso3166",
+            "version": "4.7.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/alcohol/iso3166.git",
+                "reference": "cc6b64bd60e83af155ac4c904ab9130018672659"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/alcohol/iso3166/zipball/cc6b64bd60e83af155ac4c904ab9130018672659",
+                "reference": "cc6b64bd60e83af155ac4c904ab9130018672659",
+                "shasum": ""
+            },
+            "require": {
+                "ext-mbstring": "*",
+                "php": "^7.4 || ^8.0"
+            },
+            "require-dev": {
+                "phpstan/phpstan": "^2.1.31",
+                "phpstan/phpstan-deprecation-rules": "^2.0.3",
+                "phpstan/phpstan-strict-rules": "^2.0.7",
+                "phpunit/phpunit": "^9.6.21 || ^10.5.58 || ^11.5.43 || ^12.4.2"
+            },
+            "type": "library",
+            "extra": {
+                "branch-alias": {
+                    "dev-main": "4.x-dev"
+                }
+            },
+            "autoload": {
+                "psr-4": {
+                    "League\\ISO3166\\": "src"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Rob Bast",
+                    "email": "rob.bast@gmail.com"
+                }
+            ],
+            "description": "ISO 3166-1 PHP Library",
+            "homepage": "https://github.com/alcohol/iso3166",
+            "keywords": [
+                "3166",
+                "3166-1",
+                "ISO 3166",
+                "countries",
+                "iso",
+                "library"
+            ],
+            "support": {
+                "issues": "https://github.com/alcohol/iso3166/issues",
+                "source": "https://github.com/alcohol/iso3166"
+            },
+            "funding": [
+                {
+                    "url": "https://github.com/alcohol",
+                    "type": "github"
+                }
+            ],
+            "time": "2026-11-02T15:58:25+00:00",
+            "published-time": "2026-11-02T15:59:25+00:00"
         },
         {
             "name": "nikic/fast-route",
