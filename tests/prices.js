@@ -18,7 +18,7 @@ const dialog = {
   querySelectorAll() { return amounts; }
 };
 const button = {dataset: {priceEdit: JSON.stringify(group)}, addEventListener: (event, fn) => {listeners.open = fn;}};
-vm.runInNewContext(fs.readFileSync(`${__dirname}/../panel/public/prices.js`, 'utf8'), {document: {getElementById: () => dialog, querySelectorAll: () => [button]}});
+vm.runInNewContext(fs.readFileSync(`${__dirname}/../panel/public/prices.js`, 'utf8'), {document: {getElementById: id => id === 'price-editor' ? dialog : null, querySelectorAll: () => [button]}});
 listeners.open();
 assert.equal(dialog.open, true);
 for (const key of Object.keys(inputs)) assert.equal(inputs[key].value, group[key]);

@@ -46,9 +46,12 @@ the Refresh results link remains available. Completed job results are reused dur
 refreshes, which never submit another check.
 The latest 10 batches remain in the current panel session; individual job links remain
 in check history. API clients still specify `registry_uuid`; automatic routing is a panel feature.
-The reseller Prices page uses a compact card per registry/suffix with a term comparison
-table, currency labels, override indicators and a separate restore amount. Legacy DNSSEC
-and period-0 transfer prices are excluded from both cards and API price listings.
+The reseller Prices page uses a responsive Tabler table with one row per registry/suffix,
+exact one-year registration, renewal and incoming-transfer prices, currency labels,
+override indicators and per-operation restore prices. Registry-wide defaults have their
+own row. TLD search filters rows locally; Export CSV downloads the matching rows only,
+with quoted cells and spreadsheet formula protection. Legacy DNSSEC and period-0
+transfer prices are excluded from both the table and API price listings.
 Filtering `/v1/prices` by `command=domain.create_dnssec` returns shared registration rows.
 The Wallet page also submits deposit requests through the API in the wallet currency.
 Keep the same request/payment reference when retrying; funds are credited only after
@@ -140,6 +143,7 @@ Run `php8.5 tests/prices.php` with the documented `TEST_MYSQL_*` environment to 
 complete-table saves, validation/rollback and pricing fallback. `php8.5 tests/price_groups.php`
 covers grouped edits/deletion, fixed metadata, version checks, currency isolation and
 registry-wide restore editing; `node tests/prices.js` checks editor prefilling and reset.
+`node tests/customer_prices.js` checks customer TLD filtering and CSV export.
 
 ### Reseller account and access
 
