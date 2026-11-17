@@ -29,7 +29,8 @@
         body.set('registry_debug', '1');
         names.forEach(name => body.set(name, field(name).value));
         try {
-            const response = await fetch(form.action, {method: 'POST', body, cache: 'no-store', credentials: 'same-origin', headers: {Accept: 'application/json'}});
+            // The hidden action input shadows form.action in browsers.
+            const response = await fetch(form.getAttribute('action') || location.href, {method: 'POST', body, cache: 'no-store', credentials: 'same-origin', headers: {Accept: 'application/json'}});
             if (!response.ok || response.redirected) throw new Error('Unable to generate SSL. Reload the page and try again.');
             const result = await response.json();
             if (typeof result.client_cert_pem !== 'string' || typeof result.client_key_pem !== 'string'
