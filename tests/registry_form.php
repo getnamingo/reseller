@@ -61,4 +61,20 @@ check(str_contains(RegistryForm::fields($withPem)['client_cert_pem'],"\n") && $w
 $cleared=RegistryForm::config('generic',$fields,$withPem);
 check($cleared['connection']['client_cert_pem']===null && $cleared['connection']['client_key_pem']===null && $cleared['connection']['ca_pem']===null,'Clearing certificate fields removes stored PEMs');
 invalid(array_replace($fields,['client_cert_pem'=>$pem]),'Client certificate without key rejected');
+$draftInput=['registry_debug'=>'1','ca_pem'=>'','client_cert_pem'=>'','client_key_pem'=>'','client_key_passphrase'=>''];
+$draft=RegistryForm::generateSsl($draftInput);
+$draftKey=openssl_pkey_get_private($draft['client_key_pem']);$draftCert=openssl_x509_read($draft['client_cert_pem']);
+$details=openssl_pkey_get_details($draftKey);$certificateInfo=openssl_x509_parse($draftCert);
+check($details['type']===OPENSSL_KEYTYPE_RSA && $details['bits']===2048,'Generator creates RSA 2048-bit key');
+check(openssl_x509_check_private_key($draftCert,$draftKey),'Generated certificate matches private key');
+check(openssl_x509_verify($draftCert,$details['key'])===1 && $certificateInfo['issuer']===$certificateInfo['subject'],'Generated certificate is self-signed');
+check($certificateInfo['validTo_time_t']-$certificateInfo['validFrom_time_t']===365*86400,'Generated certificate valid for 365 days');
+check(str_contains(strtolower($certificateInfo['signatureTypeSN']),'sha256'),'Generated certificate signed with SHA-256');
+check(!str_contains($draft['client_key_pem'],'ENCRYPTED'),'Default generated key needs no passphrase');
+$encrypted=RegistryForm::generateSsl(array_replace($draftInput,['client_key_passphrase'=>' exact passphrase ']));
+check(openssl_pkey_get_private($encrypted['client_key_pem'],' exact passphrase ')!==false,'Generator respects current key passphrase');
+foreach (['registry_debug'=>'0','ca_pem'=>'existing CA','client_cert_pem'=>'existing certificate','client_key_pem'=>'existing key'] as $field=>$value) {
+    try { RegistryForm::generateSsl(array_replace($draftInput,[$field=>$value]));check(false,'Ineligible generation must fail'); }
+    catch(ApiException $e){check(in_array($e->httpStatus,[409,422],true),'Generator requires Debug and empty SSL: '.$field);}
+}
 echo "PASS: {$checks} registry-form assertions\n";

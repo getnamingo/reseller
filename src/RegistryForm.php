@@ -41,6 +41,33 @@ final class RegistryForm
         return $value;
     }
 
+    /** Generate a draft only: no database or filesystem writes. */
+    public static function generateSsl(array $input): array
+    {
+        if (self::text($input,'registry_debug') !== '1') {
+            throw new ApiException(422,'ssl_debug_required','Enable Debug before generating SSL.');
+        }
+        foreach (['ca_pem','client_cert_pem','client_key_pem'] as $field) {
+            if (self::text($input,$field) !== '') {
+                throw new ApiException(409,'ssl_fields_not_empty','Clear the SSL fields before generating a new pair.');
+            }
+        }
+        $passphrase = self::text($input,'client_key_passphrase',false);
+        if (strlen($passphrase)>1024 || str_contains($passphrase,"\0")) {
+            throw new ApiException(422,'invalid_ssl_passphrase','The client key passphrase is invalid.');
+        }
+        $options = ['private_key_type'=>OPENSSL_KEYTYPE_RSA,'private_key_bits'=>2048,'digest_alg'=>'sha256'];
+        $key = openssl_pkey_new($options);
+        if ($key === false) { throw new ApiException(503,'ssl_generation_failed','SSL generation failed. Try again.'); }
+        $csr = openssl_csr_new(['commonName'=>'Namingo EPP client'],$key,$options);
+        $certificate = $csr === false ? false : openssl_csr_sign($csr,null,$key,365,$options,random_int(1,PHP_INT_MAX));
+        if ($certificate === false || !openssl_x509_export($certificate,$certificatePem)
+            || !openssl_pkey_export($key,$privateKeyPem,$passphrase === '' ? null : $passphrase,$options)) {
+            throw new ApiException(503,'ssl_generation_failed','SSL generation failed. Try again.');
+        }
+        return ['client_cert_pem'=>$certificatePem,'client_key_pem'=>$privateKeyPem];
+    }
+
     public static function config(string $profile, array $input, array $existing = []): array
     {
         $debug = self::text($input,'registry_debug');
