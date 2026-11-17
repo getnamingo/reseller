@@ -687,7 +687,7 @@ final class Ownership
             && !in_array($params['op'] ?? null, ['request', 'query', 'cancel', 'approve', 'reject'], true)) {
             throw new ApiException(422, 'invalid_transfer_op', 'A valid transfer op is required.');
         }
-        if ($transfer && (!is_string($params['authInfoPw'] ?? null) || $params['authInfoPw'] === '')) {
+        if ($transfer && $profile !== 'LT' && (!is_string($params['authInfoPw'] ?? null) || $params['authInfoPw'] === '')) {
             throw new ApiException(422, 'missing_authinfo', 'Incoming transfers require authInfoPw.');
         }
         [, $period] = CommandCatalog::priceKey($command, $params);
@@ -900,6 +900,7 @@ final class Ledger
                 }
                 self::entry($pdo, $resellerId, $jobId, null, 'hold', '-' . $price, $price, $currency, 'Reserve for ' . $command);
             }
+            if ($command === 'domain.transfer') { Transfers::queued($pdo, $jobId, $resellerId, $registryId, $params); }
             $pdo->commit();
             return ['existing' => false, 'job_id' => $jobId, 'status' => 'queued'];
         } catch (PDOException $e) {
@@ -945,6 +946,7 @@ final class Ledger
                 return;
             }
 
+            Transfers::observe($pdo, $job, $status, $result);
             Ownership::finish($pdo, $job, $status, $result);
 
             if ($job['price'] !== '0.0000' && !in_array($status, ['unknown', 'pending'], true)) {

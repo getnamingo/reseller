@@ -165,11 +165,16 @@ try {
             if ($exists !== false && !$pdo->query("SELECT 1 FROM schema_migrations WHERE version = '007_panel_domains'")->fetchColumn()) {
                 $pdo->exec(file_get_contents($root . '/database/007_panel_domains.sql'));
             }
+            $backfillTransfers = $exists !== false && !$pdo->query("SELECT 1 FROM schema_migrations WHERE version = '008_transfer_history'")->fetchColumn();
             $sql = file_get_contents($root . '/database/schema.sql');
             if ($sql === false) {
                 throw new RuntimeException('database/schema.sql is missing.');
             }
             $pdo->exec($sql);
+            if ($backfillTransfers) {
+                \Namingo\ResellerApi\Transfers::backfill($pdo);
+                $pdo->exec("INSERT IGNORE INTO schema_migrations (version) VALUES ('008_transfer_history')");
+            }
             echo "Database schema is ready.\n";
             break;
 

@@ -1,0 +1,27 @@
+{% extends 'layouts/app.twig' %}
+{% block page_actions %}<button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#request-transfer">Request transfer</button>{% endblock %}
+{% block content %}
+<div class="card"><div class="table-responsive"><table class="table table-vcenter card-table"><thead><tr><th>Domain</th>{% if section %}<th>Reseller</th>{% endif %}<th>Registry</th><th>Direction</th><th>Status</th><th>Requested</th><th>Actions</th></tr></thead><tbody>
+{% for row in rows %}<tr><td class="fw-semibold">{{ row.domainname }}</td>{% if section %}<td>{{ row.username }}</td>{% endif %}<td>{{ row.registry }}</td><td><span class="badge {{ row.direction == 'incoming' ? 'bg-blue-lt' : 'bg-orange-lt' }}">{{ row.direction }}</span></td><td><span class="badge {{ row.status == 'succeeded' ? 'bg-green-lt' : (row.status in ['rejected','unknown'] ? 'bg-red-lt' : 'bg-blue-lt') }}">{{ row.tr_status ?: row.status }}</span>{% if row.latest_job_id != row.request_job_id or row.status != 'pending' %}<div class="small text-secondary">Latest operation: {{ row.job_status }}</div>{% endif %}</td><td>{{ row.requested_at ?: row.created_at }}</td><td><div class="btn-list flex-nowrap">
+{% for action in row.actions %}<button class="btn btn-sm {{ action in ['reject','cancel'] ? 'btn-outline-danger' : 'btn-outline-primary' }}" type="button" data-bs-toggle="modal" data-bs-target="#transfer-{{ row.id }}-{{ action }}">{{ {'query':'Refresh','approve':'Approve','reject':'Reject','cancel':'Cancel'}[action] }}</button>{% endfor %}
+<a class="btn btn-sm" href="{{ section ? '/admin/jobs/' : '/jobs/' }}{{ row.latest_job_id }}">Details</a></div></td></tr>
+{% else %}<tr><td colspan="{{ section ? 7 : 6 }}" class="text-secondary text-center py-4">No transfers yet.</td></tr>{% endfor %}
+</tbody></table></div><div class="card-footer text-secondary">Incoming transfers can be cancelled; outgoing transfers can be approved or rejected while pending. Registry rules determine which operations are supported. Outgoing transfers are discovered by periodic registry queries.</div></div>
+{% include 'partials/pagination.twig' %}
+{% include 'partials/domain_operations.twig' %}
+{% for row in rows %}{% for action in row.actions %}
+<div class="modal fade" id="transfer-{{ row.id }}-{{ action }}" tabindex="-1" aria-label="Transfer action" aria-hidden="true"><div class="modal-dialog"><form class="modal-content" method="post" action="{{ path }}"><div class="modal-header"><h2 class="modal-title">{{ {'query':'Refresh','approve':'Approve','reject':'Reject','cancel':'Cancel'}[action] }} {{ row.domainname }}</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close"></button></div><div class="modal-body">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="key" value="{{ key }}"><input type="hidden" name="action" value="{{ action }}"><input type="hidden" name="transfer_id" value="{{ row.id }}">
+<p>{{ action == 'query' ? 'Query the registry for the latest transfer status.' : 'Submit this transfer decision to the registry?' }}</p>
+{% include 'partials/domain_native.twig' %}
+</div><div class="modal-footer"><button class="btn" type="button" data-bs-dismiss="modal">Close</button><button class="btn {{ action in ['reject','cancel'] ? 'btn-danger' : 'btn-primary' }}" type="submit">Confirm {{ action == 'query' ? 'refresh' : action }}</button></div></form></div></div>
+{% endfor %}{% endfor %}
+<div class="modal fade" id="request-transfer" tabindex="-1" aria-label="Request transfer" aria-hidden="true"><div class="modal-dialog modal-lg"><form class="modal-content" method="post" action="{{ path }}"><div class="modal-header"><h2 class="modal-title">Request transfer</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close"></button></div><div class="modal-body">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="key" value="{{ key }}"><input type="hidden" name="action" value="request">
+{% if section %}<label class="form-label">Gaining reseller<select class="form-select" name="reseller_id" required>{% for reseller in resellers %}<option value="{{ reseller.id }}">{{ reseller.username }}</option>{% endfor %}</select></label>{% endif %}
+<label class="form-label">Domains and authorization codes<textarea class="form-control font-monospace" name="domains" rows="8" required placeholder="example.com,authorization-code&#10;example.net,another-code"></textarea></label>
+<div class="form-hint">One domain per line, followed by a comma and its authorization code. Up to 50 ASCII/punycode domains. Omit the comma and code only where the registry permits it. Each domain uses its permitted registry and configured transfer price.</div>
+<label class="form-label mt-3">Years<select class="form-select" name="years">{% for i in 1..10 %}<option>{{ i }}</option>{% endfor %}</select></label>
+{% include 'partials/domain_native.twig' %}
+</div><div class="modal-footer"><button class="btn" type="button" data-bs-dismiss="modal">Close</button><button class="btn btn-primary" type="submit">Request transfers at configured prices</button></div></form></div></div>
+{% endblock %}

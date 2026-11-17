@@ -54,7 +54,7 @@ final class Domains
         if (!is_string($owner) || !Util::isUuid($owner) || !PanelData::rows($pdo, 'SELECT id FROM resellers WHERE id = ?', [$owner])) { throw new ApiException(422, 'invalid_reseller', 'Choose a reseller.'); }
         if ((int) $actor['role'] !== 0 && $owner !== $actor['id']) { throw new ApiException(403, 'domain_not_owned', 'Domain is unavailable for this account.'); }
         $action = DomainParams::text($input, 'action');
-        if ($domain === null && $action !== 'create') { throw new ApiException(422, 'invalid_action', 'Open the domain before changing it.'); }
+        if ($domain === null && $action !== 'create' && $action !== 'transfer-request') { throw new ApiException(422, 'invalid_action', 'Open the domain before changing it.'); }
         if ($domain !== null && $action === 'create') { throw new ApiException(422, 'invalid_action', 'Use the create-domain form.'); }
         $hashInput = $input; unset($hashInput['csrf'], $hashInput['key']);
         $hash = hash('sha256', Util::json([$hashInput, $domain['registry_id'] ?? null, $domain['object_name'] ?? null, $owner]));
@@ -67,7 +67,10 @@ final class Domains
                 foreach ($existing as $row) { self::advance($pdo, self::decode($row), $actor); }
                 return $key;
             }
-            $names = $domain === null ? preg_split('/[\s,]+/', DomainParams::text($input, 'domains'), -1, PREG_SPLIT_NO_EMPTY) : [$domain['object_name']];
+            if (str_starts_with($action, 'transfer-') && $domain !== null) {
+                Transfers::authorizeAction($pdo, $actor, $domain, $input, substr($action, 9));
+            }
+            $names = $domain === null && $action === 'transfer-request' ? array_keys(Transfers::entries($input)) : ($domain === null ? preg_split('/[\s,]+/', DomainParams::text($input, 'domains'), -1, PREG_SPLIT_NO_EMPTY) : [$domain['object_name']]);
             if (count($names) < 1 || count($names) > 50) { throw new ApiException(422, 'invalid_domains', 'Enter between 1 and 50 ASCII/punycode domain names.'); }
             $names = array_values(array_unique(array_map('strtolower', $names)));
             $routes = $domain === null ? PanelData::checkRoutes($pdo, $owner, $names)
@@ -83,7 +86,9 @@ final class Domains
                     $reg = PanelData::rows($pdo, 'SELECT profile FROM registries WHERE id = ?', [$row['registry_id']])[0];
                     $busy = PanelData::rows($pdo, "SELECT id FROM panel_domain_operations WHERE reseller_id = ? AND registry_id = ? AND domainname = ?
                         AND status IN ('prepared','queued','processing','pending','unknown') LIMIT 1", [$owner, $row['registry_id'], $row['domainname']]);
-                    $steps = DomainParams::plan($reg['profile'], $action, $row['domainname'], $input);
+                    $steps = str_starts_with($action, 'transfer-')
+                        ? Transfers::plan($reg['profile'], substr($action, 9), $row['domainname'], $input)
+                        : DomainParams::plan($reg['profile'], $action, $row['domainname'], $input);
                     if ($busy && !self::followup($pdo, $owner, $row['registry_id'], $row['domainname'], $steps[0])) {
                         throw new ApiException(409, 'domain_busy', 'An existing operation must finish or be reconciled before another request.');
                     }
