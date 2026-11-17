@@ -22,7 +22,7 @@
         "nyholm/psr7": "^1.8.2",
         "nyholm/psr7-server": "^1.1.0",
         "phpmailer/phpmailer": "^7.2",
-        "pinga/tembo": "1.1.23",
+        "pinga/tembo": "1.1.24",
         "slim/slim": "4.15.3",
         "slim/twig-view": "^3.4.1",
         "utopia-php/storage": "^5.0",
