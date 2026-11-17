@@ -30,6 +30,16 @@ sudo bash -c 'bash <(wget -qO- https://raw.githubusercontent.com/getnamingo/rese
 
 The script clones current `main` into a temporary directory and removes that checkout after the upgrade, including on failure. Review the incoming code and schedule brief API/PHP-FPM downtime. The script preserves configuration, backs up code and database, and runs migrations. Read the [upgrade and recovery instructions](docs/install.md#upgrade-an-installer-created-demo) first; custom deployments should follow the [manual migration and ownership guidance](docs/install.md#object-ownership-and-upgrading-existing-installations).
 
+To use a downloaded GitHub ZIP, put `reseller-main.zip` beside the saved `install.sh` or `upgrade.sh` (the ZIP must contain the `reseller-main/` directory), then run:
+
+```bash
+sudo bash /path/to/install.sh local
+# Or, for an existing installation:
+sudo bash /path/to/upgrade.sh local
+```
+
+Local mode extracts into a temporary directory, runs the ZIP's installer/upgrader, and removes the extracted files afterward. It keeps the original ZIP and skips Git cloning. Package and Composer downloads still run as usual.
+
 ## Integrations
 
 - [Standalone PHP API client](plugins/php-client/README.md)
