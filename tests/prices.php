@@ -120,8 +120,12 @@ try {
     PanelSession::login(Auth::login($pdo, 'user-1', $password, '127.0.0.1'));
     check(request('POST', ['action' => 'price.batch', 'csrf' => $_SESSION['csrf']] + $batch)->getStatusCode() === 403, 'Resellers cannot write price tables');
     $clientHtml = (string) request('GET', [], '/prices')->getBody();
-    check(str_contains($clientHtml, 'card-title fs-2') && str_contains($clientHtml, '.com') && str_contains($clientHtml, 'Registration includes DNSSEC'), 'Reseller prices render TLD cards with shared DNSSEC pricing guidance');
-    check(!str_contains($clientHtml, 'domain.create_dnssec') && !str_contains($clientHtml, '999.0000'), 'Reseller price cards omit deprecated price rows');
+    check(str_contains($clientHtml, 'id="customer-prices"') && str_contains($clientHtml, '.com') && str_contains($clientHtml, 'Registration includes DNSSEC'), 'Reseller prices render a yearly TLD table with shared DNSSEC pricing guidance');
+    check(substr_count($clientHtml, 'data-price-row ') === 1 && str_contains($clientHtml, 'data-price-tld="com"'), 'One row per registry suffix replaces the ten term rows');
+    check(str_contains($clientHtml, 'data-price-value="10.0000 EUR"') && !str_contains($clientHtml, 'data-price-value="20.0000 EUR"'), 'Only exact one-year term prices are displayed');
+    check(str_contains($clientHtml, 'data-price-value="0.0000 EUR"') && str_contains($clientHtml, 'data-price-value=""'), 'Zero restore prices and missing yearly prices remain distinct');
+    check(str_contains($clientHtml, 'id="price-tld-search"') && str_contains($clientHtml, 'id="price-export"') && str_contains($clientHtml, 'table-responsive'), 'Customer table has accessible search, export and responsive wrapper');
+    check(!str_contains($clientHtml, 'domain.create_dnssec') && !str_contains($clientHtml, '999.0000'), 'Reseller price table omits deprecated price rows');
     // Suggestions stay bounded, but valid accounts beyond the first 500 are selectable.
     PanelSession::login(Auth::login($pdo, 'user-0', $password, '127.0.0.1'));
     $hash = $pdo->query("SELECT password_hash FROM resellers WHERE id = '$root'")->fetchColumn();
