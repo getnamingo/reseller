@@ -14,6 +14,7 @@ use Throwable;
 final class PanelController
 {
     private ?array $user = null;
+    private string $requestPath = '/';
     private const SECTIONS = [
         'resellers' => ['user.create', 'user.update', 'user.password', 'user.status', 'user.role', 'tokens.revoke'],
         'registries' => ['registry.save', 'registry.status', 'registry.access', 'tld.save'],
@@ -30,7 +31,7 @@ final class PanelController
 
     public function handle(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
-        $path = $request->getUri()->getPath();
+        $path = $this->requestPath = $request->getUri()->getPath();
         $method = $request->getMethod();
         $input = $request->getParsedBody();
         $input = is_array($input) ? $input : [];
@@ -634,7 +635,7 @@ final class PanelController
         }
         $flash = $_SESSION['flash'] ?? null;
         unset($_SESSION['flash']);
-        return $this->view->render($response, $template, $data + ['user' => $this->user, 'csrf' => $_SESSION['csrf'] ?? '', 'flash' => $flash]);
+        return $this->view->render($response, $template, $data + ['user' => $this->user, 'csrf' => $_SESSION['csrf'] ?? '', 'flash' => $flash, 'request_path' => $this->requestPath]);
     }
 
     private function redirect(ResponseInterface $response, string $path): ResponseInterface
