@@ -67,6 +67,9 @@ final class Domains
                 foreach ($existing as $row) { self::advance($pdo, self::decode($row), $actor); }
                 return $key;
             }
+            if ($action === 'status') {
+                DomainParams::authorizeStatusChange((int) $actor['role'], DomainParams::text($input, 'status'));
+            }
             if ($action === 'renew' && $domain !== null) {
                 $info = self::info(self::operations($pdo, $actor, null, $domain));
                 $limit = self::renewalLimit($info['exDate'] ?? null, null, $domain['profile']);

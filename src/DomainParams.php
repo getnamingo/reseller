@@ -77,6 +77,15 @@ final class DomainParams
         return $index ? ['dnssec_records' => $index] + $records : [];
     }
 
+    public const TRANSFER_LOCK = 'clientTransferProhibited';
+
+    public static function authorizeStatusChange(int $role, mixed $status): void
+    {
+        if ($role !== 0 && $status !== self::TRANSFER_LOCK) {
+            throw new ApiException(403, 'status_not_permitted', 'Resellers can only change the domain transfer lock.');
+        }
+    }
+
     /** A plan is frozen and encrypted before its first job is submitted. */
     public static function plan(string $profile, string $action, string $name, array $input): array
     {

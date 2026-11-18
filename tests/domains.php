@@ -25,7 +25,7 @@ function request(string $path, string $method='GET', array $input=[], bool $csrf
     parse_str((string) parse_url($path, PHP_URL_QUERY), $query);
     return $panel->handle((new ServerRequest($method, 'http://localhost'.$path, [], '', '1.1', ['REMOTE_ADDR'=>'127.0.0.1']))->withParsedBody($input)->withQueryParams($query), new Response());
 }
-function drain(string $batch, array $actor, bool $hostExists = false): void {
+function drain(string $batch, array $actor, bool $hostExists = false, array $statuses = ['ok','clientTransferProhibited','<script>status</script>']): void {
     global $pdo;
     for ($round=0; $round<20; ++$round) {
         Domains::refresh($pdo,$actor,$batch);
@@ -36,7 +36,7 @@ function drain(string $batch, array $actor, bool $hostExists = false): void {
                 $pending=true; $name=$op['domainname'];
                 $result = match ($step['command']) {
                     'host.check'=>['code'=>1000,'hosts'=>[['name'=>$step['params']['hostname'],'avail'=>$hostExists?0:1]]],
-                    'domain.info'=>['code'=>1000,'name'=>$name,'crDate'=>'2026-01-01','exDate'=>'2028-01-01','status'=>['ok','clientTransferProhibited','<script>status</script>'],'registrant'=>'OWNER','ns'=>['ns1.example.net'],'contact'=>[['type'=>'tech','id'=>'TECH']],'authInfo'=>'PrivateDomainSecret!123'],
+                    'domain.info'=>['code'=>1000,'name'=>$name,'crDate'=>'2026-01-01','exDate'=>'2028-01-01','status'=>$statuses,'registrant'=>'OWNER','ns'=>['ns1.example.net'],'contact'=>[['type'=>'tech','id'=>'TECH']],'authInfo'=>'PrivateDomainSecret!123'],
                     default=>['code'=>1000,'msg'=>'Command completed','name'=>$name],
                 };
                 Ledger::completeJob($pdo,$step['job_uuid'],'succeeded',$result,1000);
@@ -149,6 +149,18 @@ try {
     $beforeRenew=value('SELECT COUNT(*) FROM epp_jobs');
     check(request($detail,'POST',['action'=>'renew','key'=>Util::uuid(),'years'=>'10'])->getStatusCode()===422,'Forged renewal beyond the remaining lifetime is rejected');
     check(value('SELECT COUNT(*) FROM epp_jobs')===$beforeRenew,'Over-limit panel renewal creates no job or wallet hold');
+    check(str_contains($html,'Turn off transfer lock') && !str_contains($html,'<input class="form-control" name="status"'),'Resellers see the lock control and registry statuses without the general editor');
+    $statusChange=['action'=>'status','status_action'=>'rem','status'=>'clientHold','key'=>Util::uuid()];
+    check(request($detail,'POST',$statusChange)->getStatusCode()===403 && value('SELECT COUNT(*) FROM epp_jobs')===$beforeRenew,'Resellers cannot change other statuses through the panel');
+    foreach (['rem'=>[], 'add'=>['clientTransferProhibited']] as $action=>$statuses) {
+        $key=Util::uuid();
+        $lockChange=array_replace($statusChange,['status'=>'clientTransferProhibited','status_action'=>$action,'key'=>$key]);
+        check(request($detail,'POST',$lockChange)->getStatusCode()===303,'Reseller can submit either transfer lock action');
+        $step=Domains::operations($pdo,$actor,$key)[0]['data']['steps'][0];
+        check($step['command']==='domain.update_status' && $step['params']['command']===$action && $step['params']['status']==='clientTransferProhibited','Lock control uses the existing API command and exact status');
+        drain($key,$actor,false,$statuses);
+        check(str_contains((string)request($detail)->getBody(),$action==='rem'?'Turn on transfer lock':'Turn off transfer lock'),'Registry info refresh updates the lock control');
+    }
     check(request('/admin/domains')->getStatusCode()===403,'Admin route requires role zero');
     PanelSession::login(Auth::login($pdo,'reseller-b',$password,'127.0.0.1'));
     check(request($detail)->getStatusCode()===404 && request($detail.'?format=json')->getStatusCode()===404,'Foreign detail/polling hidden');
@@ -166,6 +178,10 @@ try {
     $pdo->prepare("DELETE FROM object_ownership WHERE registry_id=? AND object_name='unsynced.com'")->execute([$registry]);
     check(request($detail)->getStatusCode()===404,'Admin reseller workspace is own-only');
     check(request('/admin/domains/'.$registry.'/one.com')->getStatusCode()===200,'Admin opens another reseller domain');
+    $adminDetail='/admin/domains/'.$registry.'/one.com';
+    check(str_contains((string)request($adminDetail)->getBody(),'name="status" placeholder="clientTransferProhibited"'),'Admin keeps the general status editor');
+    check(request($adminDetail,'POST',$statusChange)->getStatusCode()===303,'Admin can change another client status for the reseller');
+    drain($statusChange['key'],$admin);
     $renew=['key'=>Util::uuid(),'action'=>'renew','years'=>'1'];
     Domains::submit($pdo,$admin,$renew,'127.0.0.1',$domain);
     $renewOp=Domains::operations($pdo,$admin,$renew['key'])[0]; $renewJob=$renewOp['data']['steps'][0]['job_uuid'];

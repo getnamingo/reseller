@@ -75,6 +75,8 @@ The API exposes these commands:
 | `host.info` | `hostInfo` |
 | `host.update` | `hostUpdate` |
 
+Reseller tokens can use `domain.update_status` on their own domains with `status: "clientTransferProhibited"`. Set `command` to `"add"` to turn the transfer lock on or `"rem"` to turn it off. Other status changes return HTTP 403 for resellers. Administrator tokens retain the existing status editor permissions, subject to registry rules and account ownership. Domain info continues to return registry statuses.
+
 An exposed command can still be unsupported by a particular registry protocol—for example, EURid does not support host objects. That registry rejection is returned as a rejected job.
 
 ## API use

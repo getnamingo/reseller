@@ -29,7 +29,24 @@
 </div></div></div>
 <div class="col-lg-6"><div class="card h-100"><div class="card-header"><h2 class="card-title">Authorization code and statuses</h2></div><div class="card-body">
 <form method="post" action="{{ url }}">{{ form.hidden(csrf, key, 'authinfo') }}<label class="form-label">New authorization code<input class="form-control" type="password" name="authInfo" autocomplete="new-password" required></label>{% include 'partials/domain_native.twig' %}<button class="btn btn-primary mt-3">Change authorization code</button></form>
-<hr><form method="post" action="{{ url }}">{{ form.hidden(csrf, key, 'status') }}<div class="row g-2"><div class="col"><label class="form-label">Action<select class="form-select" name="status_action"><option value="add">Add</option><option value="rem">Remove</option></select></label></div><div class="col"><label class="form-label">Status<input class="form-control" name="status" placeholder="clientTransferProhibited" required></label></div></div>{% include 'partials/domain_native.twig' %}<button class="btn mt-3">Update status</button></form>
+<hr>
+{% if section %}
+<form method="post" action="{{ url }}">{{ form.hidden(csrf, key, 'status') }}<div class="row g-2"><div class="col"><label class="form-label">Action<select class="form-select" name="status_action"><option value="add">Add</option><option value="rem">Remove</option></select></label></div><div class="col"><label class="form-label">Status<input class="form-control" name="status" placeholder="clientTransferProhibited" required></label></div></div>{% include 'partials/domain_native.twig' %}<button class="btn mt-3">Update status</button></form>
+{% else %}
+<h3>Transfer lock</h3>
+{% if info.status is defined %}
+{% set locked = 'clientTransferProhibited' in info.status %}
+<p>Transfer lock is {{ locked ? 'on' : 'off' }}.</p>
+<form method="post" action="{{ url }}">
+  {{ form.hidden(csrf, key, 'status') }}
+  <input type="hidden" name="status" value="clientTransferProhibited">
+  <input type="hidden" name="status_action" value="{{ locked ? 'rem' : 'add' }}">
+  <button class="btn">{{ locked ? 'Turn off transfer lock' : 'Turn on transfer lock' }}</button>
+</form>
+{% else %}
+<p class="text-secondary">Sync the domain to check its transfer lock.</p>
+{% endif %}
+{% endif %}
 </div></div></div>
 <div class="col-lg-6" id="renew"><div class="card h-100"><div class="card-header"><h2 class="card-title">Renew domain</h2></div><div class="card-body">
 {% if renewal_limit is null %}<p class="text-secondary">Sync the domain to retrieve its expiry date before renewing.</p>
