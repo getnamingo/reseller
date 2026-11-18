@@ -10,6 +10,7 @@ use Namingo\ResellerApi\CommandCatalog;
 use Namingo\ResellerApi\Config;
 use Namingo\ResellerApi\Crypto;
 use Namingo\ResellerApi\Db;
+use Namingo\ResellerApi\DomainParams;
 use Namingo\ResellerApi\Domains;
 use Namingo\ResellerApi\EppWorker;
 use Namingo\ResellerApi\Ledger;
@@ -392,6 +393,9 @@ $server->on('Request', static function (Request $request, Response $response) us
                 throw new ApiException(422, 'invalid_params', 'params must be a JSON object.');
             }
             CommandCatalog::validateParams($command, $params);
+            if ($command === 'domain.update_status') {
+                DomainParams::authorizeStatusChange((int) $user['role'], $params['status']);
+            }
             $idempotencyKey = (string) ($request->header['idempotency-key'] ?? '');
             if ($idempotencyKey === '' && CommandCatalog::isMutating($command, $params)) {
                 throw new ApiException(428, 'idempotency_required', 'Mutating EPP commands require an Idempotency-Key header.');
