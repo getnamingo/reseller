@@ -16,7 +16,7 @@ reseller, or hosting business. Permission may be granted free of charge or
 under paid terms.
 
 See [Commercial licensing](COMMERCIAL-LICENSE.md) for permission requests,
-or contact **help@namingo.org**. See [NOTICE](NOTICE) for copyright notices.
+or contact **hello@terbora.com**. See [NOTICE](NOTICE) for copyright notices.
 Third-party dependencies remain under their respective licenses.
 
 ## Documentation
