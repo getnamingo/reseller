@@ -1,5 +1,17 @@
 <?php
 
+/*
+ * Namingo Reseller Plugins
+ *
+ * Copyright (c) 2026 Terbora Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0.
+ * See the LICENSE-APACHE-2.0 file at the repository root
+ * for the full license terms.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 declare(strict_types=1);
 
 /** Namingo reseller API adapter for FOSSBilling 0.8.9. */
