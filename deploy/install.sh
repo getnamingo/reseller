@@ -113,6 +113,19 @@ $2 {
 CADDY
 }
 
+confirm_license() {
+  local license_answer
+  exec 3<>/dev/tty || fail 'An interactive terminal is required for license acceptance.'
+  printf '\nNamingo Reseller is licensed under PolyForm Noncommercial 1.0.0.\n' >&3
+  printf 'Read the license at:\n  https://polyformproject.org/licenses/noncommercial/1.0.0\n\n' >&3
+  printf 'Commercial use requires separate written permission from Terbora Ltd.\n' >&3
+  printf 'For commercial licensing, contact hello@terbora.com.\n\n' >&3
+  printf 'Do you accept the PolyForm Noncommercial License 1.0.0 terms? [y/N]: ' >&3
+  IFS= read -r license_answer <&3 || fail 'Could not read license response.'
+  [[ $license_answer == [yY] || $license_answer == [yY][eE][sS] ]] \
+    || fail 'License terms not accepted; installation cancelled before making changes.'
+}
+
 main() {
   [[ ${EUID} -eq 0 ]] || fail 'Run this installer as root.'
   [[ -d /run/systemd/system ]] || fail 'A booted systemd host is required.'
@@ -130,7 +143,11 @@ main() {
   for service in nginx apache2; do
     if systemctl is-active --quiet "$service"; then fail "Stop $service before installing Caddy on ports 80/443."; fi
   done
-  exec 3<>/dev/tty || fail 'An interactive terminal is required for hostname confirmation and administrator password entry.'
+  exec 3<>/dev/tty || fail 'An interactive terminal is required for configuration.'
+  [[ -f $SOURCE_ROOT/LICENSE ]] || fail 'LICENSE file missing from installer source.'
+  if [[ ${1:-} != --license-accepted ]]; then
+    confirm_license
+  fi
   local panel_host api_host admin_name currency answer
   panel_host=$(ask_hostname 'Panel hostname')
   while true; do
@@ -266,6 +283,7 @@ bootstrap() (
   fi
   [[ $# == 0 || ( $# == 1 && ${1:-} == local ) ]] || fail 'Unknown argument. Use --help.'
   bootstrap_require_root
+  confirm_license
   if [[ ${1:-} == local ]]; then
     [[ -f ${BASH_SOURCE[0]} ]] || fail 'Local mode requires a saved script file beside reseller-main.zip.'
     archive_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -295,7 +313,7 @@ bootstrap() (
   fi
   [[ -f $checkout/deploy/install.sh && -f $checkout/composer.lock ]] \
     || fail 'Source is incomplete; local ZIPs must contain reseller-main/deploy/install.sh and reseller-main/composer.lock.'
-  bash "$checkout/deploy/install.sh" --from-checkout
+  bash "$checkout/deploy/install.sh" --from-checkout --license-accepted
 )
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then

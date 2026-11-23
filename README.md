@@ -4,6 +4,21 @@ A PHP 8.5/Swoole reseller API and optional web control panel built on [Namingo E
 
 Registry credentials and job payloads are encrypted. Mutating commands use idempotency keys, wallet holds and explicit reconciliation for uncertain outcomes. Deposits are credited only after an administrator verifies receipt of funds.
 
+## License
+
+Namingo Reseller is source-available under the
+[PolyForm Noncommercial License 1.0.0](LICENSE) (`PolyForm-Noncommercial-1.0.0`).
+
+Noncommercial use, modification, and redistribution are permitted only as
+provided by that license. **Commercial use requires separate prior written
+authorization from Terbora Ltd.**, including use in a commercial registrar,
+reseller, or hosting business. Permission may be granted free of charge or
+under paid terms.
+
+See [Commercial licensing](COMMERCIAL-LICENSE.md) for permission requests,
+or contact **hello@terbora.com**. See [NOTICE](NOTICE) for copyright notices.
+Third-party dependencies remain under their respective licenses.
+
 ## Documentation
 
 - [Installation and upgrades](docs/install.md) — server setup, registry configuration, pricing, migrations, backups and recovery.
