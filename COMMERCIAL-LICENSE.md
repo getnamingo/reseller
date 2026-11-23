@@ -17,7 +17,7 @@ Commercial uses that require separate permission include, for example:
 
 ## Request commercial authorization
 
-Email **help@namingo.org** with:
+Email **hello@terbora.com** with:
 
 1. Your legal name and organization.
 2. A description of your intended use (internal, hosted, managed, resale, etc.).
