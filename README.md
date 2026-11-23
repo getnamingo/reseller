@@ -1,8 +1,16 @@
 # Namingo Reseller
 
-A PHP 8.5/Swoole reseller API and optional web control panel built on [Namingo EPP Client](https://github.com/getnamingo/epp-client). Manage shared registry connections with reseller/TLD permissions, a MariaDB wallet and ledger, global and reseller-specific pricing, and durable EPP jobs.
+**Namingo Reseller** is a modern, self-hosted domain reseller platform that enables ICANN-accredited registrars and other domain registrars to launch and manage their own reseller channel.
 
-Registry credentials and job payloads are encrypted. Mutating commands use idempotency keys, wallet holds and explicit reconciliation for uncertain outcomes. Deposits are credited only after an administrator verifies receipt of funds.
+[![StandWithUkraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/badges/StandWithUkraine.svg)](https://github.com/vshymanskyy/StandWithUkraine/blob/main/docs/README.md)
+
+[![SWUbanner](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/banner2-direct.svg)](https://github.com/vshymanskyy/StandWithUkraine/blob/main/docs/README.md)
+
+Built for registrars looking to expand their distribution network, Namingo Reseller provides a complete API and web-based control panel for managing resellers, domain registrations, pricing, account balances, and transactions.
+
+The platform supports multiple registry connections, flexible reseller-specific pricing, prepaid wallets, automated domain provisioning, and secure transaction processing. Registrars retain full control over their infrastructure, registry credentials, reseller relationships, and business operations.
+
+Powered by PHP 8.5 and Swoole, Namingo Reseller is designed for performance, reliability, and straightforward self-hosted deployment.
 
 ## License
 
