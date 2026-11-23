@@ -1,5 +1,20 @@
 <?php
 
+/*
+ * Namingo Reseller
+ *
+ * Copyright (c) 2026 Terbora Ltd.
+ *
+ * Licensed under the PolyForm Noncommercial License 1.0.0.
+ * Commercial use requires separate written authorization.
+ * For licensing inquiries, contact help@namingo.org.
+ *
+ * See the LICENSE file distributed with this software
+ * for the full license terms.
+ *
+ * SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+ */
+
 declare(strict_types=1);
 
 namespace Namingo\ResellerApi;
