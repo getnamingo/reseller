@@ -130,7 +130,17 @@ main() {
   for service in nginx apache2; do
     if systemctl is-active --quiet "$service"; then fail "Stop $service before installing Caddy on ports 80/443."; fi
   done
-  exec 3<>/dev/tty || fail 'An interactive terminal is required for hostname confirmation and administrator password entry.'
+  exec 3<>/dev/tty || fail 'An interactive terminal is required for license acceptance and configuration.'
+  [[ -f $SOURCE_ROOT/LICENSE ]] || fail 'LICENSE file missing from installer source.'
+  local license_answer
+  printf '\\nNamingo Reseller is licensed under PolyForm Noncommercial 1.0.0.\\n' >&3
+  printf 'Read the full license in LICENSE or at:\\n  https://polyformproject.org/licenses/noncommercial/1.0.0\\n\\n' >&3
+  printf 'Commercial use requires separate written permission from Terbora Ltd.\\n' >&3
+  printf 'For commercial licensing, contact help@namingo.org.\\n\\n' >&3
+  printf 'Do you accept the PolyForm Noncommercial License 1.0.0 terms? [y/N]: ' >&3
+  IFS= read -r license_answer <&3 || fail 'Could not read license response.'
+  [[ $license_answer == [yY] || $license_answer == [yY][eE][sS] ]] \\
+    || fail 'License terms not accepted; installation cancelled before making changes.'
   local panel_host api_host admin_name currency answer
   panel_host=$(ask_hostname 'Panel hostname')
   while true; do
