@@ -3,8 +3,11 @@ Required Notice: Copyright (c) 2026 Terbora Ltd.
 Namingo Reseller
 Copyright (c) 2026 Terbora Ltd.
 
-The Namingo Reseller source code is licensed under the PolyForm
+The Namingo Reseller core is licensed under the PolyForm
 Noncommercial License 1.0.0. See LICENSE for the full terms.
+
+Files under plugins/ are separately licensed under Apache License 2.0.
+See LICENSE-APACHE-2.0 and plugins/LICENSE for the scope and terms.
 
 Commercial use requires separate written authorization.
 Contact: hello@terbora.com

@@ -7,7 +7,7 @@
  *
  * Licensed under the PolyForm Noncommercial License 1.0.0.
  * Commercial use requires separate written authorization.
- * For licensing inquiries, contact help@namingo.org.
+ * For licensing inquiries, contact hello@terbora.com.
  *
  * See the LICENSE file distributed with this software
  * for the full license terms.

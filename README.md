@@ -25,6 +25,11 @@ under paid terms.
 
 See [Commercial licensing](COMMERCIAL-LICENSE.md) for permission requests,
 or contact **hello@terbora.com**. See [NOTICE](NOTICE) for copyright notices.
+The independently usable PHP adapters and client code under [`plugins/`](plugins/)
+are licensed separately under the [Apache License 2.0](LICENSE-APACHE-2.0).
+**Apache 2.0 does not apply to the reseller core, API, panel, or root tests.**
+Use of the plugins does not grant rights to use the core commercially.
+
 Third-party dependencies remain under their respective licenses.
 
 ## Documentation
